@@ -25,12 +25,6 @@ st.set_page_config(page_title="재고 검색", layout="wide")
 title_col, meta_col = st.columns([3, 1])
 with title_col:
     st.title("재고 검색 대시보드")
-with meta_col:
-    if source_path is not None and Path(source_path).exists():
-        mtime = Path(source_path).stat().st_mtime
-        kst = timezone(timedelta(hours=9))
-        mtime_kst = datetime.fromtimestamp(mtime, tz=kst)
-        st.caption(f"재고장 업데이트: {mtime_kst:%Y-%m-%d %H:%M} (KST)")
 
 with st.sidebar:
     st.header("데이터")
@@ -52,6 +46,13 @@ if not DEFAULT_PATH.exists():
     st.stop()
 df = load_from_path(DEFAULT_PATH)
 source_path = DEFAULT_PATH
+
+with meta_col:
+    if source_path is not None and Path(source_path).exists():
+        mtime = Path(source_path).stat().st_mtime
+        kst = timezone(timedelta(hours=9))
+        mtime_kst = datetime.fromtimestamp(mtime, tz=kst)
+        st.caption(f"재고장 업데이트: {mtime_kst:%Y-%m-%d %H:%M} (KST)")
 
 header_left, header_right = st.columns([1, 6])
 with header_left:
