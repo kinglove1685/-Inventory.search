@@ -25,10 +25,6 @@ st.title("재고 검색 대시보드")
 
 with st.sidebar:
     st.header("데이터")
-    use_upload = st.checkbox("엑셀 업로드 사용", value=False)
-    uploaded_file = None
-    if use_upload:
-        uploaded_file = st.file_uploader("엑셀 파일 업로드", type=["xlsx", "xlsm", "xls"])
     st.caption("기본 경로: " + str(DEFAULT_PATH))
 
 @st.cache_data(show_spinner=False)
@@ -42,21 +38,11 @@ def load_from_bytes(data: bytes) -> pd.DataFrame:
 # Load data
 source_bytes = None
 source_path = None
-if use_upload and uploaded_file is not None:
-    source_bytes = uploaded_file.getvalue()
-    df = load_from_bytes(source_bytes)
-    # Normalize columns to match inventory_search expectations
-    for col in ["P코드", "T코드", "U코드", "품목코드", "품명"]:
-        if col in df.columns:
-            df[col] = df[col].fillna("").astype(str).str.strip()
-    if "재고" in df.columns:
-        df["재고"] = pd.to_numeric(df["재고"], errors="coerce").fillna(0)
-else:
-    if not DEFAULT_PATH.exists():
-        st.error(f"기본 엑셀 파일이 없습니다: {DEFAULT_PATH}")
-        st.stop()
-    df = load_from_path(DEFAULT_PATH)
-    source_path = DEFAULT_PATH
+if not DEFAULT_PATH.exists():
+    st.error(f"기본 엑셀 파일이 없습니다: {DEFAULT_PATH}")
+    st.stop()
+df = load_from_path(DEFAULT_PATH)
+source_path = DEFAULT_PATH
 
 header_left, header_right = st.columns([1, 6])
 with header_left:
