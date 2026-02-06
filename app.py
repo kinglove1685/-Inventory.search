@@ -67,7 +67,7 @@ col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 1, 1, 1, 1, 1, 1])
 with col1:
     query = st.text_input("코드/품명", placeholder="예: T4556, P4050, NewFusion")
 with col2:
-    color_query = st.text_input("컬러(컬러코드)", placeholder="예: Blue, BL01")
+    color_query = st.text_input("컬러(컬러코드)", placeholder="예: Blue, BLU")
 with col3:
     tone_query = st.text_input("톤수", placeholder="예: 2")
 with col4:
