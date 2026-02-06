@@ -22,7 +22,15 @@ DEFAULT_PATH = Path(__file__).parent / "재고관련 프로그램제작.xlsx"
 
 st.set_page_config(page_title="재고 검색", layout="wide")
 
-st.title("재고 검색 대시보드")
+title_col, meta_col = st.columns([3, 1])
+with title_col:
+    st.title("재고 검색 대시보드")
+with meta_col:
+    if source_path is not None and Path(source_path).exists():
+        mtime = Path(source_path).stat().st_mtime
+        kst = timezone(timedelta(hours=9))
+        mtime_kst = datetime.fromtimestamp(mtime, tz=kst)
+        st.caption(f"재고장 업데이트: {mtime_kst:%Y-%m-%d %H:%M} (KST)")
 
 with st.sidebar:
     st.header("데이터")
@@ -50,11 +58,6 @@ with header_left:
     st.subheader("통합 검색")
 with header_right:
     toric_mf = st.checkbox("Toric+M/F", value=False)
-    if source_path is not None and Path(source_path).exists():
-        mtime = Path(source_path).stat().st_mtime
-        kst = timezone(timedelta(hours=9))
-        mtime_kst = datetime.fromtimestamp(mtime, tz=kst)
-        st.caption(f"엑셀 업데이트: {mtime_kst:%Y-%m-%d %H:%M} (KST)")
 col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 1, 1, 1, 1, 1, 1])
 with col1:
     query = st.text_input("코드/품명", placeholder="예: T4556, P4050, NewFusion")
