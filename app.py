@@ -1,5 +1,6 @@
 ﻿import streamlit as st
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
 import pandas as pd
 
 from inventory_search import load_inventory, load_inventory_from_bytes, search_inventory, summarize_inventory, lot_breakdown
@@ -49,6 +50,11 @@ with header_left:
     st.subheader("통합 검색")
 with header_right:
     toric_mf = st.checkbox("Toric+M/F", value=False)
+    if source_path is not None and Path(source_path).exists():
+        mtime = Path(source_path).stat().st_mtime
+        kst = timezone(timedelta(hours=9))
+        mtime_kst = datetime.fromtimestamp(mtime, tz=kst)
+        st.caption(f"엑셀 업데이트: {mtime_kst:%Y-%m-%d %H:%M} (KST)")
 col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 1, 1, 1, 1, 1, 1])
 with col1:
     query = st.text_input("코드/품명", placeholder="예: T4556, P4050, NewFusion")
