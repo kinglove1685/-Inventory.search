@@ -36,6 +36,9 @@ with title_col:
 with st.sidebar:
     st.header("데이터")
     st.caption("기본 경로: " + str(DEFAULT_PATH))
+    st.header("검색 표시")
+    show_ocr = st.checkbox("OCR 검색", value=False)
+    show_search = st.checkbox("통합 검색", value=True)
 
 @st.cache_data(show_spinner=False)
 def load_from_path(path: Path) -> pd.DataFrame:
@@ -126,77 +129,89 @@ with meta_col:
         mtime_kst = datetime.fromtimestamp(mtime, tz=kst)
         st.caption(f"재고장 업데이트: {mtime_kst:%Y-%m-%d %H:%M} (KST)")
 
-st.subheader("OCR 검색")
-ocr_left, ocr_right = st.columns([2, 1])
-with ocr_left:
-    ocr_upload = st.file_uploader(
-        "OCR 이미지 업로드",
-        type=["png", "jpg", "jpeg"],
-        key="ocr_upload",
+ocr_query = ""
+if show_ocr:
+    st.subheader("OCR 검색")
+    ocr_left, ocr_right = st.columns([2, 1])
+    with ocr_left:
+        ocr_upload = st.file_uploader(
+            "OCR 이미지 업로드",
+            type=["png", "jpg", "jpeg"],
+            key="ocr_upload",
+        )
+    with ocr_right:
+        if _paste_image_button is not None:
+            paste_result = _paste_image_button("클립보드 이미지 붙여넣기", key="ocr_paste")
+            if paste_result and getattr(paste_result, "image_data", None) is not None:
+                st.session_state["ocr_paste_image"] = paste_result.image_data
+        else:
+            paste_result = None
+            st.caption("붙여넣기 기능을 불러오지 못했습니다.")
+
+    if "ocr_text" not in st.session_state:
+        st.session_state["ocr_text"] = ""
+    if "ocr_query" not in st.session_state:
+        st.session_state["ocr_query"] = ""
+
+    if st.button("OCR 실행"):
+        image_bytes = None
+        if "ocr_paste_image" in st.session_state:
+            image_bytes = _image_to_bytes(st.session_state["ocr_paste_image"])
+        if not image_bytes and ocr_upload is not None:
+            image_bytes = ocr_upload.getvalue()
+
+        if not image_bytes:
+            st.warning("OCR에 사용할 이미지를 업로드하거나 붙여넣기 해주세요.")
+        else:
+            with st.spinner("OCR 처리 중..."):
+                try:
+                    ocr_text = run_ocr(image_bytes)
+                    st.session_state["ocr_text"] = ocr_text
+                    st.session_state["ocr_query"] = ocr_text.replace("\n", " ").strip()
+                    if st.session_state["ocr_query"]:
+                        st.success("OCR 결과를 검색어에 반영했습니다.")
+                    else:
+                        st.info("OCR 결과가 비어 있습니다.")
+                except Exception as exc:
+                    st.error(f"OCR 실패: {exc}")
+
+    ocr_query = st.text_input(
+        "OCR 검색어",
+        key="ocr_query",
+        placeholder="이미지에서 추출된 텍스트가 여기에 들어갑니다",
     )
-with ocr_right:
-    if _paste_image_button is not None:
-        paste_result = _paste_image_button("클립보드 이미지 붙여넣기", key="ocr_paste")
-        if paste_result and getattr(paste_result, "image_data", None) is not None:
-            st.session_state["ocr_paste_image"] = paste_result.image_data
-    else:
-        paste_result = None
-        st.caption("붙여넣기 기능을 불러오지 못했습니다.")
+    st.text_area("OCR 원문", key="ocr_text", height=120)
 
-if "ocr_text" not in st.session_state:
-    st.session_state["ocr_text"] = ""
-if "ocr_query" not in st.session_state:
-    st.session_state["ocr_query"] = ""
-
-if st.button("OCR 실행"):
-    image_bytes = None
-    if "ocr_paste_image" in st.session_state:
-        image_bytes = _image_to_bytes(st.session_state["ocr_paste_image"])
-    if not image_bytes and ocr_upload is not None:
-        image_bytes = ocr_upload.getvalue()
-
-    if not image_bytes:
-        st.warning("OCR에 사용할 이미지를 업로드하거나 붙여넣기 해주세요.")
-    else:
-        with st.spinner("OCR 처리 중..."):
-            try:
-                ocr_text = run_ocr(image_bytes)
-                st.session_state["ocr_text"] = ocr_text
-                st.session_state["ocr_query"] = ocr_text.replace("\n", " ").strip()
-                if st.session_state["ocr_query"]:
-                    st.success("OCR 결과를 검색어에 반영했습니다.")
-                else:
-                    st.info("OCR 결과가 비어 있습니다.")
-            except Exception as exc:
-                st.error(f"OCR 실패: {exc}")
-
-ocr_query = st.text_input(
-    "OCR 검색어",
-    key="ocr_query",
-    placeholder="이미지에서 추출된 텍스트가 여기에 들어갑니다",
-)
-st.text_area("OCR 원문", key="ocr_text", height=120)
-
-header_left, header_right = st.columns([1, 6])
-with header_left:
-    st.subheader("통합 검색")
-with header_right:
-    toric_mf = st.checkbox("Toric+M/F", value=False)
-col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 1, 1, 1, 1, 1, 1])
-with col1:
-    query = st.text_input("코드/품명", placeholder="예: T4556, P4050, NewFusion", key="query")
-with col2:
-    color_query = st.text_input("컬러(컬러코드)", placeholder="예: Blue, BLU")
-with col3:
-    tone_query = st.text_input("톤수", placeholder="예: 2")
-with col4:
-    power_query = st.text_input("파워", placeholder="예: -02.50")
-with col5:
-    cyl_query = st.text_input("CYL", placeholder="예: -01.25")
-with col6:
-    axis_query = st.text_input("AXIS", placeholder="예: 90")
-with col7:
-    add_query = st.text_input("ADD", placeholder="예: +1.00")
+if show_search:
+    header_left, header_right = st.columns([1, 6])
+    with header_left:
+        st.subheader("통합 검색")
+    with header_right:
+        toric_mf = st.checkbox("Toric+M/F", value=False)
+    col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 1, 1, 1, 1, 1, 1])
+    with col1:
+        query = st.text_input("코드/품명", placeholder="예: T4556, P4050, NewFusion", key="query")
+    with col2:
+        color_query = st.text_input("컬러(컬러코드)", placeholder="예: Blue, BLU")
+    with col3:
+        tone_query = st.text_input("톤수", placeholder="예: 2")
+    with col4:
+        power_query = st.text_input("파워", placeholder="예: -02.50")
+    with col5:
+        cyl_query = st.text_input("CYL", placeholder="예: -01.25")
+    with col6:
+        axis_query = st.text_input("AXIS", placeholder="예: 90")
+    with col7:
+        add_query = st.text_input("ADD", placeholder="예: +1.00")
+else:
+    query = ""
+    color_query = ""
+    tone_query = ""
+    power_query = ""
+    cyl_query = ""
+    axis_query = ""
+    add_query = ""
+    toric_mf = False
 
 
 missing_cols: list[str] = []
@@ -273,7 +288,7 @@ has_filters = any(
     ]
 )
 
-if has_filters:
+if show_search and has_filters:
     filtered_df = df
     filtered_df = _filter_color(filtered_df, color_query)
     filtered_df = _filter_contains(filtered_df, COL_TONE, tone_query)
@@ -340,5 +355,7 @@ if has_filters:
                     file_name=file_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
-else:
+elif show_search:
     st.info("검색 조건을 입력하면 결과가 표시됩니다.")
+else:
+    st.info("왼쪽 사이드바에서 검색 화면을 선택하세요.")
