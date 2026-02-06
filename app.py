@@ -33,11 +33,11 @@ with st.sidebar:
 
 @st.cache_data(show_spinner=False)
 def load_from_path(path: Path) -> pd.DataFrame:
-    return load_inventory(path)
+    return load_inventory(path, load_color=False)
 
 @st.cache_data(show_spinner=False)
 def load_from_bytes(data: bytes) -> pd.DataFrame:
-    return load_inventory_from_bytes(data)
+    return load_inventory_from_bytes(data, load_color=False)
 
 # Load data
 source_bytes = None

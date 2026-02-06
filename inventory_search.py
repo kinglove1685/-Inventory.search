@@ -125,7 +125,7 @@ def _load_color_column_from_workbook(wb, data_len: int) -> list[str]:
     return colors
 
 
-def load_inventory(path: Path) -> pd.DataFrame:
+def load_inventory(path: Path, load_color: bool = False) -> pd.DataFrame:
     df = pd.read_excel(path, sheet_name=SHEET_NAME)
 
     # Normalize key columns to strings
@@ -137,18 +137,19 @@ def load_inventory(path: Path) -> pd.DataFrame:
     if COL_STOCK in df.columns:
         df[COL_STOCK] = pd.to_numeric(df[COL_STOCK], errors="coerce").fillna(0)
 
-    # Load fill color from Excel column E (컬러)
-    try:
-        wb = load_workbook(path, data_only=True)
-        if SHEET_NAME in wb.sheetnames:
-            df[COL_COLOR_HEX] = _load_color_column_from_workbook(wb, len(df))
-    except Exception:
-        df[COL_COLOR_HEX] = ""
+    # Load fill color from Excel column E (컬러) if requested
+    if load_color:
+        try:
+            wb = load_workbook(path, data_only=True, read_only=True)
+            if SHEET_NAME in wb.sheetnames:
+                df[COL_COLOR_HEX] = _load_color_column_from_workbook(wb, len(df))
+        except Exception:
+            df[COL_COLOR_HEX] = ""
 
     return df
 
 
-def load_inventory_from_bytes(data: bytes) -> pd.DataFrame:
+def load_inventory_from_bytes(data: bytes, load_color: bool = False) -> pd.DataFrame:
     from io import BytesIO
 
     bio = BytesIO(data)
@@ -161,13 +162,14 @@ def load_inventory_from_bytes(data: bytes) -> pd.DataFrame:
     if COL_STOCK in df.columns:
         df[COL_STOCK] = pd.to_numeric(df[COL_STOCK], errors="coerce").fillna(0)
 
-    try:
-        bio.seek(0)
-        wb = load_workbook(bio, data_only=True)
-        if SHEET_NAME in wb.sheetnames:
-            df[COL_COLOR_HEX] = _load_color_column_from_workbook(wb, len(df))
-    except Exception:
-        df[COL_COLOR_HEX] = ""
+    if load_color:
+        try:
+            bio.seek(0)
+            wb = load_workbook(bio, data_only=True, read_only=True)
+            if SHEET_NAME in wb.sheetnames:
+                df[COL_COLOR_HEX] = _load_color_column_from_workbook(wb, len(df))
+        except Exception:
+            df[COL_COLOR_HEX] = ""
 
     return df
 
