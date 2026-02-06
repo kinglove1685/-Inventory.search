@@ -1,6 +1,8 @@
 ﻿import streamlit as st
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+from io import BytesIO
+import json
 import pandas as pd
 
 from inventory_search import load_inventory, load_inventory_from_bytes, search_inventory, summarize_inventory, lot_breakdown
@@ -20,6 +22,11 @@ from inventory_search import (
 
 DEFAULT_PATH = Path(__file__).parent / "재고관련 프로그램제작.xlsx"
 
+try:
+    from streamlit_paste_button import paste_image_button as _paste_image_button
+except Exception:
+    _paste_image_button = None
+
 st.set_page_config(page_title="재고 검색", layout="wide")
 
 title_col, meta_col = st.columns([3, 1])
@@ -38,6 +45,71 @@ def load_from_path(path: Path) -> pd.DataFrame:
 def load_from_bytes(data: bytes) -> pd.DataFrame:
     return load_inventory_from_bytes(data, load_color=False)
 
+
+def _get_service_account_info() -> dict | None:
+    if "gcp_service_account" in st.secrets:
+        try:
+            return dict(st.secrets["gcp_service_account"])
+        except Exception:
+            return st.secrets["gcp_service_account"]
+    if "gcp_service_account_json" in st.secrets:
+        try:
+            return json.loads(st.secrets["gcp_service_account_json"])
+        except Exception:
+            return None
+    return None
+
+
+def _get_vision_client():
+    from google.cloud import vision
+    from google.oauth2 import service_account
+
+    info = _get_service_account_info()
+    if not info:
+        return None
+    creds = service_account.Credentials.from_service_account_info(info)
+    return vision.ImageAnnotatorClient(credentials=creds)
+
+
+def _image_to_bytes(image_obj) -> bytes | None:
+    if image_obj is None:
+        return None
+    if isinstance(image_obj, (bytes, bytearray)):
+        return bytes(image_obj)
+    if hasattr(image_obj, "getvalue"):
+        try:
+            return image_obj.getvalue()
+        except Exception:
+            pass
+    try:
+        from PIL import Image
+
+        if isinstance(image_obj, Image.Image):
+            buffer = BytesIO()
+            image_obj.save(buffer, format="PNG")
+            return buffer.getvalue()
+    except Exception:
+        pass
+    return None
+
+
+def run_ocr(image_bytes: bytes) -> str:
+    client = _get_vision_client()
+    if client is None:
+        raise RuntimeError("GCP 서비스 계정 정보가 설정되지 않았습니다.")
+    from google.cloud import vision
+
+    image = vision.Image(content=image_bytes)
+    response = client.document_text_detection(
+        image=image,
+        image_context={"language_hints": ["ko", "en"]},
+    )
+    if response.error.message:
+        raise RuntimeError(response.error.message)
+    if response.full_text_annotation and response.full_text_annotation.text:
+        return response.full_text_annotation.text
+    return ""
+
 # Load data
 source_bytes = None
 source_path = None
@@ -54,6 +126,57 @@ with meta_col:
         mtime_kst = datetime.fromtimestamp(mtime, tz=kst)
         st.caption(f"재고장 업데이트: {mtime_kst:%Y-%m-%d %H:%M} (KST)")
 
+st.subheader("OCR 검색")
+ocr_left, ocr_right = st.columns([2, 1])
+with ocr_left:
+    ocr_upload = st.file_uploader(
+        "OCR 이미지 업로드",
+        type=["png", "jpg", "jpeg"],
+        key="ocr_upload",
+    )
+with ocr_right:
+    if _paste_image_button is not None:
+        paste_result = _paste_image_button("클립보드 이미지 붙여넣기", key="ocr_paste")
+        if paste_result and getattr(paste_result, "image_data", None) is not None:
+            st.session_state["ocr_paste_image"] = paste_result.image_data
+    else:
+        paste_result = None
+        st.caption("붙여넣기 기능을 불러오지 못했습니다.")
+
+if "ocr_text" not in st.session_state:
+    st.session_state["ocr_text"] = ""
+if "ocr_query" not in st.session_state:
+    st.session_state["ocr_query"] = ""
+
+if st.button("OCR 실행"):
+    image_bytes = None
+    if "ocr_paste_image" in st.session_state:
+        image_bytes = _image_to_bytes(st.session_state["ocr_paste_image"])
+    if not image_bytes and ocr_upload is not None:
+        image_bytes = ocr_upload.getvalue()
+
+    if not image_bytes:
+        st.warning("OCR에 사용할 이미지를 업로드하거나 붙여넣기 해주세요.")
+    else:
+        with st.spinner("OCR 처리 중..."):
+            try:
+                ocr_text = run_ocr(image_bytes)
+                st.session_state["ocr_text"] = ocr_text
+                st.session_state["ocr_query"] = ocr_text.replace("\n", " ").strip()
+                if st.session_state["ocr_query"]:
+                    st.success("OCR 결과를 검색어에 반영했습니다.")
+                else:
+                    st.info("OCR 결과가 비어 있습니다.")
+            except Exception as exc:
+                st.error(f"OCR 실패: {exc}")
+
+ocr_query = st.text_input(
+    "OCR 검색어",
+    key="ocr_query",
+    placeholder="이미지에서 추출된 텍스트가 여기에 들어갑니다",
+)
+st.text_area("OCR 원문", key="ocr_text", height=120)
+
 header_left, header_right = st.columns([1, 6])
 with header_left:
     st.subheader("통합 검색")
@@ -61,7 +184,7 @@ with header_right:
     toric_mf = st.checkbox("Toric+M/F", value=False)
 col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 1, 1, 1, 1, 1, 1])
 with col1:
-    query = st.text_input("코드/품명", placeholder="예: T4556, P4050, NewFusion")
+    query = st.text_input("코드/품명", placeholder="예: T4556, P4050, NewFusion", key="query")
 with col2:
     color_query = st.text_input("컬러(컬러코드)", placeholder="예: Blue, BLU")
 with col3:
@@ -140,6 +263,7 @@ def _filter_color(df: pd.DataFrame, value: str) -> pd.DataFrame:
 has_filters = any(
     [
         query.strip(),
+        ocr_query.strip(),
         color_query.strip(),
         tone_query.strip(),
         power_query.strip(),
@@ -162,8 +286,9 @@ if has_filters:
         missing_label = ", ".join(sorted(set(missing_cols)))
         st.warning(f"엑셀에 다음 컬럼이 없어 해당 조건은 무시했습니다: {missing_label}")
 
-    if query.strip():
-        result = search_inventory(filtered_df, query)
+    combined_query = " ".join([query.strip(), ocr_query.strip()]).strip()
+    if combined_query:
+        result = search_inventory(filtered_df, combined_query)
     else:
         result = summarize_inventory(filtered_df)
     if result.empty:

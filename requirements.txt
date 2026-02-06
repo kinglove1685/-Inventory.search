@@ -1,3 +1,6 @@
 streamlit
 pandas
 openpyxl
+google-cloud-vision
+streamlit-paste-button
+pillow
