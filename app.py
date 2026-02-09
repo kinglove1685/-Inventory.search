@@ -188,7 +188,7 @@ if show_search:
         st.subheader("통합 검색")
     with header_right:
         toric_mf = st.checkbox("Toric+M/F", value=False)
-    col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 1, 1, 1, 1, 1, 1])
+    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([2, 1, 1, 1, 1, 1, 1, 1])
     with col1:
         query = st.text_input("코드/품명", placeholder="예: T4556, P4050, NewFusion", key="query")
     with col2:
@@ -203,6 +203,8 @@ if show_search:
         axis_query = st.text_input("AXIS", placeholder="예: 90")
     with col7:
         add_query = st.text_input("ADD", placeholder="예: +1.00")
+    with col8:
+        category_query = st.selectbox("분류", options=["전체", "FRP", "1DAY"], index=0)
 else:
     query = ""
     color_query = ""
@@ -212,6 +214,7 @@ else:
     axis_query = ""
     add_query = ""
     toric_mf = False
+    category_query = "전체"
 
 
 missing_cols: list[str] = []
@@ -223,9 +226,14 @@ def _filter_contains(df: pd.DataFrame, col: str, value: str) -> pd.DataFrame:
     if col not in df.columns:
         missing_cols.append(col)
         return df
-    value_upper = value.strip().upper()
+    parts = [v.strip().upper() for v in value.split(",") if v.strip()]
+    if not parts:
+        return df
     series = df[col].fillna("").astype(str).str.strip().str.upper()
-    return df[series.str.contains(value_upper, na=False)]
+    mask = series.str.contains(parts[0], na=False)
+    for p in parts[1:]:
+        mask = mask | series.str.contains(p, na=False)
+    return df[mask]
 
 
 def _filter_numeric_equal(df: pd.DataFrame, col: str, value: str, decimals: int = 2) -> pd.DataFrame:
@@ -234,12 +242,22 @@ def _filter_numeric_equal(df: pd.DataFrame, col: str, value: str, decimals: int 
     if col not in df.columns:
         missing_cols.append(col)
         return df
-    try:
-        target = round(float(str(value).strip()), decimals)
-    except Exception:
+    parts = [v.strip() for v in value.split(",") if v.strip()]
+    if not parts:
+        return df
+    targets = []
+    for p in parts:
+        try:
+            targets.append(round(float(p), decimals))
+        except Exception:
+            continue
+    if not targets:
         return df
     series = pd.to_numeric(df[col], errors="coerce").round(decimals)
-    return df[series == target]
+    mask = False
+    for t in targets:
+        mask = mask | (series == t)
+    return df[mask]
 
 
 def _filter_int_equal(df: pd.DataFrame, col: str, value: str) -> pd.DataFrame:
@@ -248,25 +266,43 @@ def _filter_int_equal(df: pd.DataFrame, col: str, value: str) -> pd.DataFrame:
     if col not in df.columns:
         missing_cols.append(col)
         return df
-    try:
-        target = int(str(value).strip())
-    except Exception:
+    parts = [v.strip() for v in value.split(",") if v.strip()]
+    if not parts:
+        return df
+    targets = []
+    for p in parts:
+        try:
+            targets.append(int(p))
+        except Exception:
+            continue
+    if not targets:
         return df
     series = pd.to_numeric(df[col], errors="coerce").round(0)
-    return df[series == target]
+    mask = False
+    for t in targets:
+        mask = mask | (series == t)
+    return df[mask]
 
 
 def _filter_color(df: pd.DataFrame, value: str) -> pd.DataFrame:
     if not value:
         return df
-    value_upper = value.strip().upper().replace(" ", "")
+    parts = [v.strip().upper().replace(" ", "") for v in value.split(",") if v.strip()]
+    if not parts:
+        return df
     masks = []
     if COL_COLOR in df.columns:
         s = df[COL_COLOR].fillna("").astype(str).str.upper().str.replace(r"\s+", "", regex=True)
-        masks.append(s.str.contains(value_upper, na=False))
+        m = s.str.contains(parts[0], na=False)
+        for p in parts[1:]:
+            m = m | s.str.contains(p, na=False)
+        masks.append(m)
     if "컬러코드" in df.columns:
         s = df["컬러코드"].fillna("").astype(str).str.upper().str.replace(r"\s+", "", regex=True)
-        masks.append(s.str.contains(value_upper, na=False))
+        m = s.str.contains(parts[0], na=False)
+        for p in parts[1:]:
+            m = m | s.str.contains(p, na=False)
+        masks.append(m)
     if not masks:
         missing_cols.append("컬러/컬러코드")
         return df
@@ -296,6 +332,8 @@ if show_search and has_filters:
     filtered_df = _filter_numeric_equal(filtered_df, COL_CYL, cyl_query, decimals=2)
     filtered_df = _filter_int_equal(filtered_df, COL_AXIS, axis_query)
     filtered_df = _filter_numeric_equal(filtered_df, COL_ADD, add_query, decimals=2)
+    if category_query != "전체":
+        filtered_df = _filter_contains(filtered_df, "분류", category_query)
 
     if missing_cols:
         missing_label = ", ".join(sorted(set(missing_cols)))
@@ -312,6 +350,12 @@ if show_search and has_filters:
         display_df = result.copy()
         if COL_COLOR_HEX in display_df.columns:
             display_df = display_df.drop(columns=[COL_COLOR_HEX])
+        if "최종재고" in display_df.columns:
+            display_df = display_df.rename(columns={"최종재고": "재고(pcs)"})
+        if "재고(pcs)" in display_df.columns:
+            display_df["재고(pcs)"] = display_df["재고(pcs)"].apply(
+                lambda v: f"{int(v):,}" if pd.notna(v) and str(v).strip() != "" else v
+            )
 
         left_col, right_col = st.columns([3, 1])
         with left_col:

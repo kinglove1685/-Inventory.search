@@ -5,22 +5,26 @@ from pathlib import Path
 
 import pandas as pd
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import PatternFill, Border, Side, Font
 from openpyxl.styles.colors import COLOR_INDEX
 
 SHEET_NAME = "재고장"
 
 # Column names in the source sheet
+COL_CATEGORY = "분류"
 COL_P = "P코드"
 COL_T = "T코드"
 COL_U = "U코드"
 COL_ITEM = "품목코드"
 COL_NAME = "품명"
-COL_STOCK = "재고"
+COL_STOCK = "최종재고"
 COL_POWER = "파워"
 COL_COLOR = "컬러"
 COL_COLOR_CODE = "컬러코드"
 COL_TONE = "톤수"
-COL_GROUP = "구분"
+COL_GROUP_PRODUCT = "구분_제품"
+COL_GROUP_ERP = "구분_ERP"
+COL_GROUP = COL_GROUP_PRODUCT
 COL_LOTNO = "LOTNO"
 COL_CYL = "CYL"
 COL_AXIS = "AXIS"
@@ -33,6 +37,13 @@ DEFAULT_SEARCH_COLS = [COL_P, COL_T, COL_U, COL_NAME, COL_ITEM, COL_COLOR, COL_C
 
 CODE_PATTERN = re.compile(r"^[PTU]\d+$", re.IGNORECASE)
 CODE_COLOR_PATTERN = re.compile(r"^([PTU]\d+)(.+)$", re.IGNORECASE)
+
+FILL_POS = PatternFill("solid", fgColor="FFF2CC")   # 옅은 노랑
+FILL_NEG_0_10 = PatternFill("solid", fgColor="E6E6E6")  # 옅은 회색
+FILL_NEG_10_20 = PatternFill("solid", fgColor="FBE5D6")  # 옅은 주황
+THIN = Side(style="thin", color="D0D0D0")
+BORDER_THIN = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+FONT_RED = Font(color="FF0000")
 
 
 def _normalize_series(s: pd.Series) -> pd.Series:
@@ -71,6 +82,63 @@ def _fmt_power_value(v):
         return v
     sign = "-" if fv <= 0 else "+"
     return f"{sign}{abs(fv):05.2f}"
+
+
+def _power_to_float(power) -> float | None:
+    if power is None:
+        return None
+    try:
+        return float(str(power).strip())
+    except Exception:
+        return None
+
+
+def _power_fill(power) -> PatternFill | None:
+    v = _power_to_float(power)
+    if v is None:
+        return None
+    if v > 0:
+        return FILL_POS
+    if v >= -10.00:
+        return FILL_NEG_0_10
+    if v >= -20.00:
+        return FILL_NEG_10_20
+    return None
+
+
+def _apply_row_style(ws, row: int, start_col: int, end_col: int, fill: PatternFill | None):
+    for c in range(start_col, end_col + 1):
+        cell = ws.cell(row=row, column=c)
+        if fill is not None:
+            cell.fill = fill
+
+
+def _apply_sheet_borders(ws, min_row: int = 1, min_col: int = 1):
+    max_row = ws.max_row
+    max_col = ws.max_column
+    for r in range(min_row, max_row + 1):
+        for c in range(min_col, max_col + 1):
+            ws.cell(row=r, column=c).border = BORDER_THIN
+
+
+def _should_keep_power(power, total_qty: float, keep_neg_10_25_plus: bool, keep_pos_range: bool) -> bool:
+    v = _power_to_float(power)
+    if v is None:
+        return True
+    # -00.00 ~ -10.00 구간은 항상 유지
+    if -10.00 <= v <= 0.00:
+        return True
+    # +파워 구간은 하나라도 재고가 있으면 전체 유지
+    if v > 0 and keep_pos_range:
+        return True
+    # -10.25 이하 구간은 하나라도 재고가 있으면 전체 유지
+    if v <= -10.25 and keep_neg_10_25_plus:
+        return True
+    # +파워 또는 -10.25 이하 구간은 재고가 있을 때만 표시
+    try:
+        return float(total_qty) > 0
+    except Exception:
+        return False
 
 
 def _collect_powers(ws, start_row: int) -> list[str]:
@@ -115,21 +183,44 @@ def _collect_powers(ws, start_row: int) -> list[str]:
     return [_fmt_power_value(p) for p in powers]
 
 
+def _find_header_column(ws, header: str) -> int | None:
+    for col_idx in range(1, ws.max_column + 1):
+        v = ws.cell(row=1, column=col_idx).value
+        if v is not None and str(v).strip() == header:
+            return col_idx
+    return None
+
+
 def _load_color_column_from_workbook(wb, data_len: int) -> list[str]:
-    # Excel column E -> 5 (1-based)
     ws = wb[SHEET_NAME]
+    color_col = _find_header_column(ws, COL_COLOR)
+    if color_col is None:
+        # Fallback to old 위치(컬러가 5열이던 시절)
+        color_col = 5
     colors = []
     for row_idx in range(2, data_len + 2):
-        cell = ws.cell(row=row_idx, column=5)
+        cell = ws.cell(row=row_idx, column=color_col)
         colors.append(_excel_color_to_hex(cell))
     return colors
+
+
+def _ensure_compat_columns(df: pd.DataFrame) -> pd.DataFrame:
+    # 구버전 호환: 최종재고가 없으면 재고를 사용
+    if COL_STOCK not in df.columns and "재고" in df.columns:
+        df[COL_STOCK] = df["재고"]
+    # 구버전 호환: 구분_제품이 없으면 구분을 사용
+    if COL_GROUP_PRODUCT not in df.columns and "구분" in df.columns:
+        df[COL_GROUP_PRODUCT] = df["구분"]
+    return df
 
 
 def load_inventory(path: Path, load_color: bool = False) -> pd.DataFrame:
     df = pd.read_excel(path, sheet_name=SHEET_NAME)
 
+    df = _ensure_compat_columns(df)
+
     # Normalize key columns to strings
-    for col in [COL_P, COL_T, COL_U, COL_ITEM, COL_NAME, COL_COLOR, COL_COLOR_CODE, COL_TONE, COL_GROUP, COL_LOTNO, COL_CYL, COL_AXIS, COL_ADD]:
+    for col in [COL_CATEGORY, COL_P, COL_T, COL_U, COL_ITEM, COL_NAME, COL_COLOR, COL_COLOR_CODE, COL_TONE, COL_GROUP_PRODUCT, COL_GROUP_ERP, COL_LOTNO, COL_CYL, COL_AXIS, COL_ADD]:
         if col in df.columns:
             df[col] = _normalize_series(df[col])
 
@@ -155,7 +246,9 @@ def load_inventory_from_bytes(data: bytes, load_color: bool = False) -> pd.DataF
     bio = BytesIO(data)
     df = pd.read_excel(bio, sheet_name=SHEET_NAME)
 
-    for col in [COL_P, COL_T, COL_U, COL_ITEM, COL_NAME, COL_COLOR, COL_COLOR_CODE, COL_TONE, COL_GROUP, COL_LOTNO, COL_CYL, COL_AXIS, COL_ADD]:
+    df = _ensure_compat_columns(df)
+
+    for col in [COL_CATEGORY, COL_P, COL_T, COL_U, COL_ITEM, COL_NAME, COL_COLOR, COL_COLOR_CODE, COL_TONE, COL_GROUP_PRODUCT, COL_GROUP_ERP, COL_LOTNO, COL_CYL, COL_AXIS, COL_ADD]:
         if col in df.columns:
             df[col] = _normalize_series(df[col])
 
@@ -288,14 +381,19 @@ def build_summary_export(
 
     for power in powers:
         out_ws.cell(row=row, column=2, value=power)
-        out_ws.cell(row=row, column=3, value=0)
+        qty_cell = out_ws.cell(row=row, column=3, value=0)
+        qty_cell.number_format = "#,##0"
         out_ws.merge_cells(start_row=row, start_column=3, end_row=row, end_column=5)
+        _apply_row_style(out_ws, row, 2, 5, _power_fill(power))
         row += 1
 
     out_ws.cell(row=row, column=2, value="합계")
-    out_ws.cell(row=row, column=3, value=0)
+    total_cell = out_ws.cell(row=row, column=3, value=0)
+    total_cell.number_format = "#,##0"
     out_ws.merge_cells(start_row=row, start_column=3, end_row=row, end_column=5)
+    _apply_row_style(out_ws, row, 2, 5, None)
 
+    _apply_sheet_borders(out_ws, min_row=1, min_col=2)
     from io import BytesIO
 
     bio = BytesIO()
@@ -334,6 +432,7 @@ def build_summary_export_multi(
     product_keys = []
     power_map = {}
     info_map = {}
+    power_totals = {}
     for row in rows:
         pcode = str(row.get(COL_P, "")).strip()
         tcode = str(row.get(COL_T, "")).strip()
@@ -366,6 +465,23 @@ def build_summary_export_multi(
         except Exception:
             qty_val = 0.0
         power_map[key][p_norm] = power_map[key].get(p_norm, 0.0) + qty_val
+        power_totals[p_norm] = power_totals.get(p_norm, 0.0) + qty_val
+
+    has_neg_10_25_stock = any(
+        (_power_to_float(p) is not None and _power_to_float(p) <= -10.25 and power_totals.get(str(p).strip().upper(), 0.0) > 0)
+        for p in powers
+    )
+    has_pos_stock = any(
+        (_power_to_float(p) is not None and _power_to_float(p) > 0 and power_totals.get(str(p).strip().upper(), 0.0) > 0)
+        for p in powers
+    )
+
+    filtered_powers = []
+    for power in powers:
+        p_norm = str(power).strip().upper()
+        total_qty = power_totals.get(p_norm, 0.0)
+        if _should_keep_power(power, total_qty, has_neg_10_25_stock, has_pos_stock):
+            filtered_powers.append(power)
 
     if use_toric:
         def _num_or_inf(v):
@@ -433,27 +549,48 @@ def build_summary_export_multi(
 
         total = 0.0
         local_map = power_map.get(key, {})
-        for i, power in enumerate(powers):
+        for i, power in enumerate(filtered_powers):
             row = power_start_row + i
             p_norm = str(power).strip().upper()
             qty = local_map.get(p_norm, 0.0)
             out_ws.cell(row=row, column=2, value=power)
-            out_ws.cell(row=row, column=out_col, value=qty)
+            qty_cell = out_ws.cell(row=row, column=out_col, value=qty)
+            qty_cell.number_format = "#,##0"
             out_ws.merge_cells(start_row=row, start_column=out_col, end_row=row, end_column=out_col + 2)
+            _apply_row_style(out_ws, row, 2, 2, _power_fill(power))
+            _apply_row_style(out_ws, row, out_col, out_col + 2, _power_fill(power))
             try:
                 total += float(qty)
             except Exception:
                 pass
 
-        out_ws.cell(row=power_start_row + len(powers), column=2, value="합계")
-        out_ws.cell(row=power_start_row + len(powers), column=out_col, value=total)
+        out_ws.cell(row=power_start_row + len(filtered_powers), column=2, value="합계")
+        total_cell = out_ws.cell(row=power_start_row + len(filtered_powers), column=out_col, value=total)
+        total_cell.number_format = "#,##0"
         out_ws.merge_cells(
-            start_row=power_start_row + len(powers),
+            start_row=power_start_row + len(filtered_powers),
             start_column=out_col,
-            end_row=power_start_row + len(powers),
+            end_row=power_start_row + len(filtered_powers),
             end_column=out_col + 2,
         )
+        _apply_row_style(out_ws, power_start_row + len(filtered_powers), 2, 2, None)
+        _apply_row_style(out_ws, power_start_row + len(filtered_powers), out_col, out_col + 2, None)
 
+    # 행 전체 합이 0일 때만 빨간색 표시
+    for i, power in enumerate(filtered_powers):
+        row = power_start_row + i
+        row_total = 0.0
+        p_norm = str(power).strip().upper()
+        for key in product_keys:
+            local_map = power_map.get(key, {})
+            row_total += float(local_map.get(p_norm, 0.0) or 0.0)
+        if row_total == 0:
+            out_ws.cell(row=row, column=2).font = FONT_RED
+            for idx in range(len(product_keys)):
+                out_col = 3 + (idx * 3)
+                out_ws.cell(row=row, column=out_col).font = FONT_RED
+
+    _apply_sheet_borders(out_ws, min_row=1, min_col=2)
     from io import BytesIO
 
     bio = BytesIO()
@@ -548,6 +685,8 @@ def _term_mask(df: pd.DataFrame, term: str) -> pd.Series:
 def _summarize_inventory(df: pd.DataFrame) -> pd.DataFrame:
     # Group by P/T + color + tone + power and keep a representative name
     group_cols = []
+    if COL_CATEGORY in df.columns:
+        group_cols.append(COL_CATEGORY)
     if COL_P in df.columns:
         group_cols.append(COL_P)
     if COL_T in df.columns:
@@ -593,6 +732,7 @@ def _summarize_inventory(df: pd.DataFrame) -> pd.DataFrame:
 
     # Column order: P, T, 컬러, 톤수, 파워, 품명, 재고, LOTNO 합계수량
     preferred = [
+        COL_CATEGORY,
         COL_P,
         COL_T,
         COL_COLOR,
