@@ -3,6 +3,8 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
 import json
+import os
+import re
 import pandas as pd
 
 from inventory_search import load_inventory, load_inventory_from_bytes, search_inventory, summarize_inventory, lot_breakdown
@@ -10,6 +12,7 @@ from inventory_search import (
     build_summary_export_multi,
     COL_COLOR,
     COL_COLOR_HEX,
+    COL_LOTNO,
     COL_NAME,
     COL_P,
     COL_T,
@@ -27,18 +30,222 @@ try:
 except Exception:
     _paste_image_button = None
 
-st.set_page_config(page_title="재고 검색", layout="wide")
+TEST_MODE = os.environ.get("INVENTORY_APP_TEST", "").strip().lower() in {"1", "true", "yes", "y"}
+default_page_title = "재고 검색 TEST" if TEST_MODE else "재고 검색"
+default_dashboard_title = "재고 검색 대시보드"
+PAGE_TITLE = os.environ.get("INVENTORY_APP_PAGE_TITLE", default_page_title)
+DASHBOARD_TITLE = os.environ.get("INVENTORY_APP_DASHBOARD_TITLE", default_dashboard_title)
+st.set_page_config(page_title=PAGE_TITLE, layout="wide")
+
+st.markdown(
+    """
+    <style>
+    :root {
+        --app-font: "Pretendard", "SUIT", "Noto Sans KR", "Segoe UI", sans-serif;
+        --text-strong: #1e2a44;
+        --text-base: #2f3b55;
+        --text-soft: #6b7895;
+    }
+    html, body, [data-testid="stAppViewContainer"], section[data-testid="stSidebar"] {
+        font-family: var(--app-font);
+    }
+    [data-testid="stAppViewContainer"] .main .block-container {
+        padding-top: 1.2rem;
+    }
+    .material-icons,
+    .material-icons-outlined,
+    .material-icons-round,
+    .material-icons-sharp,
+    .material-symbols-outlined,
+    .material-symbols-rounded,
+    .material-symbols-sharp {
+        font-family: "Material Icons", "Material Symbols Outlined", "Material Symbols Rounded", "Material Symbols Sharp" !important;
+        font-weight: normal !important;
+        font-style: normal !important;
+        letter-spacing: normal !important;
+        text-transform: none !important;
+        white-space: nowrap !important;
+        direction: ltr !important;
+    }
+    [data-testid="stAppViewContainer"] h1 {
+        font-size: 2.56rem;
+        line-height: 1.15;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+        color: var(--text-strong);
+    }
+    [data-testid="stAppViewContainer"] h2 {
+        font-size: 1.85rem;
+        font-weight: 750;
+        letter-spacing: -0.005em;
+        color: var(--text-strong);
+    }
+    [data-testid="stAppViewContainer"] h3 {
+        font-size: 1.56rem;
+        font-weight: 700;
+        color: var(--text-strong);
+    }
+    [data-testid="stCheckbox"] label p {
+        font-size: 1.28rem;
+        font-weight: 650;
+    }
+    [data-testid="stAppViewContainer"] label,
+    [data-testid="stAppViewContainer"] .stMarkdown,
+    [data-testid="stAppViewContainer"] p {
+        color: var(--text-base);
+        font-size: 0.97rem;
+    }
+    [data-testid="stAppViewContainer"] [data-testid="stCaptionContainer"] {
+        color: var(--text-soft);
+        font-size: 0.83rem;
+    }
+    [data-testid="stTextInput"] input,
+    [data-testid="stNumberInput"] input,
+    [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+        font-size: 0.98rem;
+        font-weight: 550;
+    }
+    [data-testid="stAppViewContainer"] [data-testid="stDataFrame"] {
+        font-size: 0.94rem;
+    }
+    section[data-testid="stSidebar"] > div {
+        background:
+            radial-gradient(120% 100% at 0% 0%, rgba(61, 121, 242, 0.18) 0%, rgba(61, 121, 242, 0.00) 52%),
+            linear-gradient(180deg, #edf2ff 0%, #e3ebff 100%);
+    }
+    section[data-testid="stSidebar"] .block-container {
+        padding-top: 1.1rem;
+        padding-bottom: 1.1rem;
+    }
+    section[data-testid="stSidebar"] [data-testid="stExpander"] {
+        border: 1px solid #d4def4;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.78);
+        box-shadow: 0 10px 24px rgba(30, 64, 175, 0.08);
+        margin-bottom: 0.85rem;
+        overflow: hidden;
+        backdrop-filter: blur(6px);
+    }
+    section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+        background: rgba(255, 255, 255, 0.96);
+        border-bottom: 1px solid #e4ebfb;
+        border-radius: 16px 16px 0 0;
+        padding: 0.55rem 0.72rem;
+    }
+    section[data-testid="stSidebar"] [data-testid="stExpander"] summary p {
+        font-size: 1.12rem;
+        font-weight: 800;
+        color: #1e2a44;
+        letter-spacing: 0.01em;
+    }
+    section[data-testid="stSidebar"] .stButton > button {
+        border-radius: 11px;
+        width: 100%;
+        text-align: left;
+        padding: 0.56rem 0.76rem;
+        border: 1px solid transparent;
+        background: rgba(255, 255, 255, 0.6);
+        transition: all 120ms ease;
+        font-size: 1rem;
+    }
+    section[data-testid="stSidebar"] .stButton > button:hover {
+        border-color: #c7d6fb;
+        background: rgba(255, 255, 255, 0.98);
+    }
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #2f7cf3 0%, #4c8ff7 100%);
+        border-color: #2f7cf3;
+        color: #ffffff !important;
+        font-weight: 800;
+        box-shadow: 0 8px 18px rgba(47, 124, 243, 0.32);
+    }
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"] * {
+        color: #ffffff !important;
+        fill: #ffffff !important;
+    }
+    section[data-testid="stSidebar"] .stButton > button[kind="secondary"],
+    section[data-testid="stSidebar"] .stButton > button[kind="tertiary"] {
+        font-weight: 700;
+        color: #32405f;
+    }
+    section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {
+        color: #64708e;
+        font-size: 0.86rem;
+    }
+    section[data-testid="stSidebar"] .stButton {
+        margin-bottom: 0.3rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 title_col, meta_col = st.columns([3, 1])
 with title_col:
-    st.title("재고 검색 대시보드")
+    st.title(DASHBOARD_TITLE)
 
 with st.sidebar:
     st.header("데이터")
     st.caption("기본 경로: " + str(DEFAULT_PATH))
-    st.header("검색 표시")
-    show_ocr = st.checkbox("OCR 검색", value=False)
-    show_search = st.checkbox("통합 검색", value=True)
+    if "active_screen" not in st.session_state:
+        st.session_state["active_screen"] = "integrated"
+
+    with st.expander("검색 표시", expanded=True):
+        if st.button(
+            "통합 검색",
+            key="nav_integrated",
+            use_container_width=True,
+            type="primary" if st.session_state["active_screen"] == "integrated" else "tertiary",
+        ):
+            st.session_state["active_screen"] = "integrated"
+            st.rerun()
+        if st.button(
+            "OCR 검색",
+            key="nav_ocr",
+            use_container_width=True,
+            type="primary" if st.session_state["active_screen"] == "ocr" else "tertiary",
+        ):
+            st.session_state["active_screen"] = "ocr"
+            st.rerun()
+
+    with st.expander("멸균넘버 기준표", expanded=True):
+        if st.button(
+            "멸균넘버기준표",
+            key="nav_sterile_ref",
+            use_container_width=True,
+            type="primary" if st.session_state["active_screen"] == "sterile_ref" else "tertiary",
+        ):
+            st.session_state["active_screen"] = "sterile_ref"
+            st.rerun()
+
+active_screen = st.session_state.get("active_screen", "integrated")
+show_search = active_screen == "integrated"
+show_ocr = active_screen == "ocr"
+show_sterile_ref = active_screen == "sterile_ref"
+
+_persist_defaults = {
+    "toric_mf": False,
+    "query": "",
+    "color_query": "",
+    "tone_query": "",
+    "power_query": "",
+    "cyl_query": "",
+    "axis_query": "",
+    "add_query": "",
+    "category_query": "전체",
+    "sterile_query": "",
+    "sterile_mode": "고정",
+    "ocr_query": "",
+    "ocr_text": "",
+}
+for _k, _v in _persist_defaults.items():
+    _pk = f"persist_{_k}"
+    if _pk not in st.session_state:
+        st.session_state[_pk] = _v
+    if _k in st.session_state:
+        st.session_state[_pk] = st.session_state[_k]
+    else:
+        st.session_state[_k] = st.session_state[_pk]
 
 @st.cache_data(show_spinner=False)
 def load_from_path(path: Path) -> pd.DataFrame:
@@ -47,6 +254,113 @@ def load_from_path(path: Path) -> pd.DataFrame:
 @st.cache_data(show_spinner=False)
 def load_from_bytes(data: bytes) -> pd.DataFrame:
     return load_inventory_from_bytes(data, load_color=False)
+
+
+@st.cache_data(show_spinner=False)
+def load_sterile_reference(path: Path) -> pd.DataFrame:
+    try:
+        ref_df = pd.read_excel(path, sheet_name="멸균넘버 기준표")
+    except Exception:
+        return pd.DataFrame(columns=["시작일자", "종료일자", "멸균LOT", "유효기간(5년)", "유효기간(8년)"])
+    lot_col = None
+    for c in ref_df.columns:
+        name = str(c).strip()
+        if name in {"멸균LOT", "멸균넘버", "LOTNO"}:
+            lot_col = c
+            break
+    if lot_col is None:
+        return pd.DataFrame(columns=["시작일자", "종료일자", "멸균LOT", "유효기간(5년)", "유효기간(8년)"])
+    ref_df = ref_df.copy()
+    ref_df = ref_df.rename(columns={lot_col: "멸균LOT"})
+    if "멸균LOT" in ref_df.columns:
+        ref_df["멸균LOT"] = ref_df["멸균LOT"].fillna("").astype(str).str.strip().str.upper()
+        ref_df = ref_df[ref_df["멸균LOT"] != ""]
+    keep_cols = ["시작일자", "종료일자", "멸균LOT", "유효기간(5년)", "유효기간(8년)"]
+    for c in keep_cols:
+        if c not in ref_df.columns:
+            ref_df[c] = ""
+    return ref_df[keep_cols]
+
+
+def _sterile_code_to_rank(code: str) -> int | None:
+    s = str(code or "").strip().upper()
+    m = re.fullmatch(r"([A-Z]{2})(\d{2})", s)
+    if not m:
+        return None
+    a, b = m.group(1)[0], m.group(1)[1]
+    prefix_rank = (ord(a) - 65) * 26 + (ord(b) - 65)
+    return prefix_rank * 100 + int(m.group(2))
+
+
+def _sterile_rank_to_code(rank: int) -> str | None:
+    if rank < 0:
+        return None
+    prefix_rank, num = divmod(rank, 100)
+    if prefix_rank >= 26 * 26:
+        return None
+    a = chr(65 + (prefix_rank // 26))
+    b = chr(65 + (prefix_rank % 26))
+    return f"{a}{b}{num:02d}"
+
+
+def _build_sterile_order_map(ref_df: pd.DataFrame) -> dict[str, int]:
+    order_map: dict[str, int] = {}
+    for v in ref_df.get("멸균LOT", pd.Series(dtype=str)):
+        code = str(v).strip().upper()
+        if not code:
+            continue
+        rank = _sterile_code_to_rank(code)
+        if rank is not None:
+            order_map[code] = rank
+        elif code not in order_map:
+            order_map[code] = len(order_map)
+    return order_map
+
+
+def _build_sterile_reference_view(ref_df: pd.DataFrame, before_count: int = 20, after_count: int = 20) -> pd.DataFrame:
+    view_df = ref_df.copy()
+    if view_df.empty:
+        return view_df
+    view_df["구분"] = "기준표"
+
+    ranks = []
+    for code in view_df["멸균LOT"].astype(str):
+        rank = _sterile_code_to_rank(code)
+        if rank is not None:
+            ranks.append(rank)
+    if not ranks:
+        return view_df
+
+    min_rank = min(ranks)
+    max_rank = max(ranks)
+    prev_rows = []
+    next_rows = []
+
+    for rank in range(max(0, min_rank - before_count), min_rank):
+        code = _sterile_rank_to_code(rank)
+        if code:
+            prev_rows.append({"멸균LOT": code, "구분": "계산(이전)"})
+    for rank in range(max_rank + 1, max_rank + after_count + 1):
+        code = _sterile_rank_to_code(rank)
+        if code:
+            next_rows.append({"멸균LOT": code, "구분": "계산(이후)"})
+
+    prev_df = pd.DataFrame(prev_rows)
+    next_df = pd.DataFrame(next_rows)
+    for col in ["시작일자", "종료일자", "유효기간(5년)", "유효기간(8년)"]:
+        if col not in prev_df.columns:
+            prev_df[col] = ""
+        if col not in next_df.columns:
+            next_df[col] = ""
+    ordered_cols = ["구분", "시작일자", "종료일자", "멸균LOT", "유효기간(5년)", "유효기간(8년)"]
+    return pd.concat(
+        [
+            prev_df[ordered_cols],
+            view_df[ordered_cols],
+            next_df[ordered_cols],
+        ],
+        ignore_index=True,
+    )
 
 
 def _get_service_account_info() -> dict | None:
@@ -121,6 +435,9 @@ if not DEFAULT_PATH.exists():
     st.stop()
 df = load_from_path(DEFAULT_PATH)
 source_path = DEFAULT_PATH
+sterile_ref_df = load_sterile_reference(DEFAULT_PATH)
+sterile_order_map = _build_sterile_order_map(sterile_ref_df)
+sterile_ref_view_df = _build_sterile_reference_view(sterile_ref_df, before_count=20, after_count=20)
 
 with meta_col:
     if source_path is not None and Path(source_path).exists():
@@ -128,6 +445,14 @@ with meta_col:
         kst = timezone(timedelta(hours=9))
         mtime_kst = datetime.fromtimestamp(mtime, tz=kst)
         st.caption(f"재고장 업데이트: {mtime_kst:%Y-%m-%d %H:%M} (KST)")
+
+if show_sterile_ref:
+    st.subheader("멸균넘버 기준표")
+    if sterile_ref_view_df.empty:
+        st.info("멸균넘버 기준표를 불러오지 못했습니다.")
+    else:
+        st.caption("기준표 + 계산(이전 20개/이후 20개)")
+        st.dataframe(sterile_ref_view_df, use_container_width=True, height=720)
 
 ocr_query = ""
 if show_ocr:
@@ -183,38 +508,64 @@ if show_ocr:
     st.text_area("OCR 원문", key="ocr_text", height=120)
 
 if show_search:
-    header_left, header_right = st.columns([1, 6])
+    header_left, header_right = st.columns([1, 7])
     with header_left:
         st.subheader("통합 검색")
     with header_right:
-        toric_mf = st.checkbox("Toric+M/F", value=False)
+        # keep tight vertical spacing, but align sterile filter widths to:
+        # query = AXIS~ADD (2 cols), mode = category (1 col)
+        h1, h2, h3, h4 = st.columns([0.9, 3.1, 2.0, 1.0])
+        with h1:
+            toric_mf = st.checkbox("Toric+M/F", key="toric_mf")
+        with h2:
+            st.empty()
+        with h3:
+            st.markdown("**멸균필터**")
+            sterile_query = st.text_input(
+                "멸균필터-코드",
+                placeholder="예: OG83",
+                key="sterile_query",
+                label_visibility="collapsed",
+            )
+        with h4:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            sterile_mode = st.selectbox(
+                "멸균필터-조건",
+                options=["고정", "이상", "이하"],
+                key="sterile_mode",
+                label_visibility="collapsed",
+            )
+
+    # Row: 코드~분류를 한 줄에 정렬
     col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([2, 1, 1, 1, 1, 1, 1, 1])
     with col1:
         query = st.text_input("코드/품명", placeholder="예: T4556, P4050, NewFusion", key="query")
     with col2:
-        color_query = st.text_input("컬러(컬러코드)", placeholder="예: Blue, BLU")
+        color_query = st.text_input("컬러(컬러코드)", placeholder="예: Blue, BLU", key="color_query")
     with col3:
-        tone_query = st.text_input("톤수", placeholder="예: 2")
+        tone_query = st.text_input("톤수", placeholder="예: 2", key="tone_query")
     with col4:
-        power_query = st.text_input("파워", placeholder="예: -02.50")
+        power_query = st.text_input("파워", placeholder="예: -02.50", key="power_query")
     with col5:
-        cyl_query = st.text_input("CYL", placeholder="예: -01.25")
+        cyl_query = st.text_input("CYL", placeholder="예: -01.25", key="cyl_query")
     with col6:
-        axis_query = st.text_input("AXIS", placeholder="예: 90")
+        axis_query = st.text_input("AXIS", placeholder="예: 90", key="axis_query")
     with col7:
-        add_query = st.text_input("ADD", placeholder="예: +1.00")
+        add_query = st.text_input("ADD", placeholder="예: +1.00", key="add_query")
     with col8:
-        category_query = st.selectbox("분류", options=["전체", "FRP", "1DAY"], index=0)
+        category_query = st.selectbox("분류", options=["전체", "FRP", "1DAY"], key="category_query")
 else:
-    query = ""
-    color_query = ""
-    tone_query = ""
-    power_query = ""
-    cyl_query = ""
-    axis_query = ""
-    add_query = ""
-    toric_mf = False
-    category_query = "전체"
+    query = st.session_state.get("query", "")
+    color_query = st.session_state.get("color_query", "")
+    sterile_query = st.session_state.get("sterile_query", "")
+    sterile_mode = st.session_state.get("sterile_mode", "고정")
+    tone_query = st.session_state.get("tone_query", "")
+    power_query = st.session_state.get("power_query", "")
+    cyl_query = st.session_state.get("cyl_query", "")
+    axis_query = st.session_state.get("axis_query", "")
+    add_query = st.session_state.get("add_query", "")
+    toric_mf = st.session_state.get("toric_mf", False)
+    category_query = st.session_state.get("category_query", "전체")
 
 
 missing_cols: list[str] = []
@@ -311,11 +662,51 @@ def _filter_color(df: pd.DataFrame, value: str) -> pd.DataFrame:
         mask = mask | m
     return df[mask]
 
+
+def _filter_sterile_number(df: pd.DataFrame, value: str, mode: str, order_map: dict[str, int]) -> pd.DataFrame:
+    target = str(value or "").strip().upper()
+    if not target:
+        return df
+    sterile_col = None
+    for c in ["멸균No.", "멸균NO.", "멸균no."]:
+        if c in df.columns:
+            sterile_col = c
+            break
+    if sterile_col is None:
+        missing_cols.append("멸균No.")
+        return df
+    lots = df[sterile_col].fillna("").astype(str).str.strip().str.upper()
+    if mode == "고정":
+        return df[lots == target]
+
+    target_idx = _sterile_code_to_rank(target)
+    if target_idx is None and order_map and target in order_map:
+        target_idx = order_map[target]
+
+    idx = lots.map(_sterile_code_to_rank)
+    if order_map:
+        idx = idx.fillna(lots.map(order_map))
+
+    if target_idx is not None:
+        if mode == "이상":
+            return df[idx.notna() & (idx >= target_idx)]
+        if mode == "이하":
+            return df[idx.notna() & (idx <= target_idx)]
+
+    # 기준표에 없는 코드이거나 기준표를 못 읽었을 때는 문자열 비교로 fallback
+    if mode == "이상":
+        return df[lots >= target]
+    if mode == "이하":
+        return df[lots <= target]
+    return df[lots == target]
+
+
 has_filters = any(
     [
         query.strip(),
         ocr_query.strip(),
         color_query.strip(),
+        sterile_query.strip(),
         tone_query.strip(),
         power_query.strip(),
         cyl_query.strip(),
@@ -327,6 +718,7 @@ has_filters = any(
 if show_search and has_filters:
     filtered_df = df
     filtered_df = _filter_color(filtered_df, color_query)
+    filtered_df = _filter_sterile_number(filtered_df, sterile_query, sterile_mode, sterile_order_map)
     filtered_df = _filter_contains(filtered_df, COL_TONE, tone_query)
     filtered_df = _filter_numeric_equal(filtered_df, COL_POWER, power_query, decimals=2)
     filtered_df = _filter_numeric_equal(filtered_df, COL_CYL, cyl_query, decimals=2)
@@ -374,6 +766,12 @@ if show_search and has_filters:
                 lot_df = lot_breakdown(df, selected_row)
                 st.caption("LOT 상세")
                 if not lot_df.empty:
+                    if "최종재고" in lot_df.columns:
+                        lot_df = lot_df.rename(columns={"최종재고": "재고(pcs)"})
+                    if "재고(pcs)" in lot_df.columns:
+                        lot_df["재고(pcs)"] = lot_df["재고(pcs)"].apply(
+                            lambda v: f"{int(v):,}" if pd.notna(v) and str(v).strip() != "" else v
+                        )
                     st.dataframe(lot_df, use_container_width=True, height=320)
                 else:
                     st.caption("LOT 정보 없음")
@@ -401,5 +799,10 @@ if show_search and has_filters:
                 )
 elif show_search:
     st.info("검색 조건을 입력하면 결과가 표시됩니다.")
+elif show_ocr:
+    st.info("OCR 화면입니다. OCR 실행 후 검색어를 확인하세요.")
+elif show_sterile_ref:
+    pass
 else:
     st.info("왼쪽 사이드바에서 검색 화면을 선택하세요.")
+

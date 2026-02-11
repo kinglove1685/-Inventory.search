@@ -26,6 +26,7 @@ COL_GROUP_PRODUCT = "구분_제품"
 COL_GROUP_ERP = "구분_ERP"
 COL_GROUP = COL_GROUP_PRODUCT
 COL_LOTNO = "LOTNO"
+COL_STERILE_NO_CANDIDATES = ["멸균No.", "멸균NO.", "멸균no.", "멸균No", "멸균NO", "멸균no"]
 COL_CYL = "CYL"
 COL_AXIS = "AXIS"
 COL_ADD = "ADD"
@@ -33,7 +34,7 @@ COL_COLOR_HEX = "컬러_색상"
 SUMMARY_SHEET = "SUMMARY"
 SUMMARY_TORIC_SHEET = "SUMMARY (ToricMF)"
 
-DEFAULT_SEARCH_COLS = [COL_P, COL_T, COL_U, COL_NAME, COL_ITEM, COL_COLOR, COL_COLOR_CODE, COL_TONE]
+DEFAULT_SEARCH_COLS = [COL_P, COL_T, COL_U, COL_NAME, COL_ITEM, COL_COLOR, COL_COLOR_CODE, COL_TONE, COL_LOTNO]
 
 CODE_PATTERN = re.compile(r"^[PTU]\d+$", re.IGNORECASE)
 CODE_COLOR_PATTERN = re.compile(r"^([PTU]\d+)(.+)$", re.IGNORECASE)
@@ -810,12 +811,42 @@ def lot_breakdown(df: pd.DataFrame, row: dict) -> pd.DataFrame:
     if COL_LOTNO not in filtered.columns:
         return filtered.head(0)
 
-    lot_df = (
-        filtered.groupby(COL_LOTNO, dropna=False)[COL_STOCK]
-        .sum()
-        .reset_index()
-        .sort_values(COL_STOCK, ascending=False)
-    )
+    sterile_col = None
+    for c in COL_STERILE_NO_CANDIDATES:
+        if c in filtered.columns:
+            sterile_col = c
+            break
+
+    if sterile_col is not None:
+        lot_df = (
+            filtered.groupby(COL_LOTNO, dropna=False)
+            .agg(
+                **{
+                    "멸균No.": (
+                        sterile_col,
+                        lambda s: ", ".join(
+                            sorted(
+                                {
+                                    str(v).strip()
+                                    for v in s.fillna("")
+                                    if str(v).strip()
+                                }
+                            )
+                        ),
+                    ),
+                    COL_STOCK: (COL_STOCK, "sum"),
+                }
+            )
+            .reset_index()
+            .sort_values(COL_STOCK, ascending=False)
+        )
+    else:
+        lot_df = (
+            filtered.groupby(COL_LOTNO, dropna=False)[COL_STOCK]
+            .sum()
+            .reset_index()
+            .sort_values(COL_STOCK, ascending=False)
+        )
     if COL_STOCK in lot_df.columns:
         lot_df[COL_STOCK] = pd.to_numeric(lot_df[COL_STOCK], errors="coerce").fillna(0).round(0).astype(int)
 
