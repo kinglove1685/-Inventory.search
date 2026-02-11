@@ -258,18 +258,39 @@ def load_from_bytes(data: bytes) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def load_sterile_reference(path: Path) -> pd.DataFrame:
+    empty_df = pd.DataFrame(columns=["시작일자", "종료일자", "멸균LOT", "유효기간(5년)", "유효기간(8년)"])
     try:
-        ref_df = pd.read_excel(path, sheet_name="멸균넘버 기준표")
+        xls = pd.ExcelFile(path)
     except Exception:
-        return pd.DataFrame(columns=["시작일자", "종료일자", "멸균LOT", "유효기간(5년)", "유효기간(8년)"])
+        return empty_df
+
+    sheet_name = None
+    preferred_names = ["멸균넘버 기준표", "멸균넘버기준표", "멸균 기준표", "멸균기준표"]
+    for name in preferred_names:
+        if name in xls.sheet_names:
+            sheet_name = name
+            break
+    if sheet_name is None:
+        for name in xls.sheet_names:
+            n = str(name).replace(" ", "")
+            if "멸균" in n and "기준" in n:
+                sheet_name = name
+                break
+    if sheet_name is None:
+        return empty_df
+
+    try:
+        ref_df = pd.read_excel(path, sheet_name=sheet_name)
+    except Exception:
+        return empty_df
     lot_col = None
     for c in ref_df.columns:
         name = str(c).strip()
-        if name in {"멸균LOT", "멸균넘버", "LOTNO"}:
+        if name in {"멸균LOT", "멸균넘버", "멸균No.", "멸균NO.", "LOTNO"}:
             lot_col = c
             break
     if lot_col is None:
-        return pd.DataFrame(columns=["시작일자", "종료일자", "멸균LOT", "유효기간(5년)", "유효기간(8년)"])
+        return empty_df
     ref_df = ref_df.copy()
     ref_df = ref_df.rename(columns={lot_col: "멸균LOT"})
     if "멸균LOT" in ref_df.columns:
