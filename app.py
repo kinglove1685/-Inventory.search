@@ -342,7 +342,10 @@ def _build_sterile_reference_view(ref_df: pd.DataFrame, before_count: int = 20, 
     view_df = ref_df.copy()
     if view_df.empty:
         return view_df
-    view_df["구분"] = "기준표"
+    # Normalize date columns for calculations (keeps original columns for display).
+    for col in ["시작일자", "종료일자", "유효기간(5년)", "유효기간(8년)"]:
+        if col in view_df.columns:
+            view_df[col] = pd.to_datetime(view_df[col], errors="coerce")
 
     ranks = []
     for code in view_df["멸균LOT"].astype(str):
@@ -352,19 +355,65 @@ def _build_sterile_reference_view(ref_df: pd.DataFrame, before_count: int = 20, 
     if not ranks:
         return view_df
 
+    ranked_df = view_df.copy()
+    ranked_df["_rank"] = ranked_df["멸균LOT"].astype(str).map(_sterile_code_to_rank)
+    ranked_df = ranked_df[ranked_df["_rank"].notna()].sort_values("_rank")
+    dated_df = ranked_df.dropna(subset=["시작일자", "종료일자"]).copy()
+
+    # Determine the most common step (start date delta) and span (end-start).
+    step_days = 14
+    span_days = 13
+    if not dated_df.empty:
+        start_delta = dated_df["시작일자"].diff().dt.days
+        span_delta = (dated_df["종료일자"] - dated_df["시작일자"]).dt.days
+        if not start_delta.dropna().empty:
+            step_days = int(start_delta.dropna().value_counts().idxmax())
+        if not span_delta.dropna().empty:
+            span_days = int(span_delta.dropna().value_counts().idxmax())
+
+    def _calc_expiry(start_date: pd.Timestamp, years: int) -> pd.Timestamp | str:
+        if pd.isna(start_date):
+            return ""
+        base = start_date + pd.DateOffset(years=years, months=-1)
+        return (base + pd.offsets.MonthEnd(0)).normalize()
+
     min_rank = min(ranks)
     max_rank = max(ranks)
     prev_rows = []
     next_rows = []
 
+    base_min_start = None
+    base_max_start = None
+    if not dated_df.empty:
+        base_min_start = dated_df.iloc[0]["시작일자"]
+        base_max_start = dated_df.iloc[-1]["시작일자"]
+
     for rank in range(max(0, min_rank - before_count), min_rank):
         code = _sterile_rank_to_code(rank)
         if code:
-            prev_rows.append({"멸균LOT": code, "구분": "계산(이전)"})
+            row = {"멸균LOT": code}
+            if base_min_start is not None:
+                delta = rank - min_rank
+                start = base_min_start + pd.Timedelta(days=step_days * delta)
+                end = start + pd.Timedelta(days=span_days)
+                row["시작일자"] = start
+                row["종료일자"] = end
+                row["유효기간(5년)"] = _calc_expiry(start, 5)
+                row["유효기간(8년)"] = _calc_expiry(start, 8)
+            prev_rows.append(row)
     for rank in range(max_rank + 1, max_rank + after_count + 1):
         code = _sterile_rank_to_code(rank)
         if code:
-            next_rows.append({"멸균LOT": code, "구분": "계산(이후)"})
+            row = {"멸균LOT": code}
+            if base_max_start is not None:
+                delta = rank - max_rank
+                start = base_max_start + pd.Timedelta(days=step_days * delta)
+                end = start + pd.Timedelta(days=span_days)
+                row["시작일자"] = start
+                row["종료일자"] = end
+                row["유효기간(5년)"] = _calc_expiry(start, 5)
+                row["유효기간(8년)"] = _calc_expiry(start, 8)
+            next_rows.append(row)
 
     prev_df = pd.DataFrame(prev_rows)
     next_df = pd.DataFrame(next_rows)
@@ -373,8 +422,8 @@ def _build_sterile_reference_view(ref_df: pd.DataFrame, before_count: int = 20, 
             prev_df[col] = ""
         if col not in next_df.columns:
             next_df[col] = ""
-    ordered_cols = ["구분", "시작일자", "종료일자", "멸균LOT", "유효기간(5년)", "유효기간(8년)"]
-    return pd.concat(
+    ordered_cols = ["시작일자", "종료일자", "멸균LOT", "유효기간(5년)", "유효기간(8년)"]
+    result_df = pd.concat(
         [
             prev_df[ordered_cols],
             view_df[ordered_cols],
@@ -382,6 +431,10 @@ def _build_sterile_reference_view(ref_df: pd.DataFrame, before_count: int = 20, 
         ],
         ignore_index=True,
     )
+    for col in ["시작일자", "종료일자", "유효기간(5년)", "유효기간(8년)"]:
+        if col in result_df.columns:
+            result_df[col] = pd.to_datetime(result_df[col], errors="coerce").dt.strftime("%Y-%m-%d")
+    return result_df
 
 
 def _get_service_account_info() -> dict | None:
@@ -468,12 +521,66 @@ with meta_col:
         st.caption(f"재고장 업데이트: {mtime_kst:%Y-%m-%d %H:%M} (KST)")
 
 if show_sterile_ref:
-    st.subheader("멸균넘버 기준표")
+    header_left, header_right = st.columns([4, 3])
+    with header_left:
+        st.subheader("멸균넘버 기준표")
+    with header_right:
+        f1, f2 = st.columns([2, 1])
+        with f1:
+            sterile_date_value = st.date_input(
+                "시작일자 검색",
+                value=None,
+                key="sterile_ref_date",
+                label_visibility="collapsed",
+            )
+        with f2:
+            sterile_date_mode = st.radio(
+                "검색 방향",
+                options=["이후", "이전"],
+                key="sterile_ref_date_mode",
+                horizontal=True,
+                label_visibility="collapsed",
+            )
+
     if sterile_ref_view_df.empty:
         st.info("멸균넘버 기준표를 불러오지 못했습니다.")
     else:
-        st.caption("기준표 + 계산(이전 20개/이후 20개)")
-        st.dataframe(sterile_ref_view_df, use_container_width=True, height=720)
+        filtered_ref = sterile_ref_view_df.copy()
+        date_value = None
+        if sterile_date_value:
+            date_value = pd.to_datetime(sterile_date_value, errors="coerce")
+        if date_value is not None and not pd.isna(date_value):
+            start_dates = pd.to_datetime(filtered_ref["시작일자"], errors="coerce")
+            if sterile_date_mode == "이전":
+                filtered_ref = filtered_ref[start_dates <= date_value]
+            else:
+                filtered_ref = filtered_ref[start_dates >= date_value]
+            filtered_ref = filtered_ref.sort_values("시작일자", ascending=(sterile_date_mode != "이전"))
+
+        highlight_idx = None
+        if date_value is not None and not pd.isna(date_value):
+            start_dates = pd.to_datetime(filtered_ref["시작일자"], errors="coerce")
+            exact = filtered_ref[start_dates == date_value]
+            if not exact.empty:
+                highlight_idx = set(exact.index)
+            else:
+                if sterile_date_mode == "이전":
+                    candidate = filtered_ref.loc[start_dates == start_dates.max()]
+                else:
+                    candidate = filtered_ref.loc[start_dates == start_dates.min()]
+                if not candidate.empty:
+                    highlight_idx = {candidate.index[0]}
+
+        def _highlight_selected_date(row):
+            if highlight_idx and row.name in highlight_idx:
+                return ["background-color: #d8ecff"] * len(row)
+            return [""] * len(row)
+
+        st.dataframe(
+            filtered_ref.style.apply(_highlight_selected_date, axis=1),
+            use_container_width=True,
+            height=720,
+        )
 
 ocr_query = ""
 if show_ocr:
