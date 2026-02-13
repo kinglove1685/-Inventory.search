@@ -225,6 +225,7 @@ show_sterile_ref = active_screen == "sterile_ref"
 
 _persist_defaults = {
     "toric_mf": False,
+    "export_no_power": False,
     "query": "",
     "color_query": "",
     "tone_query": "",
@@ -525,7 +526,14 @@ if show_sterile_ref:
     with header_left:
         st.subheader("멸균넘버 기준표")
     with header_right:
-        f1, f2 = st.columns([2, 1])
+        f0, f1, f2 = st.columns([1.2, 2, 1])
+        with f0:
+            sterile_date_field = st.selectbox(
+                "검색 기준",
+                options=["시작일자", "유효기간(5년)", "유효기간(8년)"],
+                key="sterile_ref_date_field",
+                label_visibility="collapsed",
+            )
         with f1:
             sterile_date_value = st.date_input(
                 "시작일자 검색",
@@ -550,24 +558,27 @@ if show_sterile_ref:
         if sterile_date_value:
             date_value = pd.to_datetime(sterile_date_value, errors="coerce")
         if date_value is not None and not pd.isna(date_value):
-            start_dates = pd.to_datetime(filtered_ref["시작일자"], errors="coerce")
+            base_dates = pd.to_datetime(filtered_ref[sterile_date_field], errors="coerce")
             if sterile_date_mode == "이전":
-                filtered_ref = filtered_ref[start_dates <= date_value]
+                filtered_ref = filtered_ref[base_dates <= date_value]
             else:
-                filtered_ref = filtered_ref[start_dates >= date_value]
-            filtered_ref = filtered_ref.sort_values("시작일자", ascending=(sterile_date_mode != "이전"))
+                filtered_ref = filtered_ref[base_dates >= date_value]
+            filtered_ref = filtered_ref.sort_values(
+                sterile_date_field,
+                ascending=(sterile_date_mode != "이전"),
+            )
 
         highlight_idx = None
         if date_value is not None and not pd.isna(date_value):
-            start_dates = pd.to_datetime(filtered_ref["시작일자"], errors="coerce")
-            exact = filtered_ref[start_dates == date_value]
+            base_dates = pd.to_datetime(filtered_ref[sterile_date_field], errors="coerce")
+            exact = filtered_ref[base_dates == date_value]
             if not exact.empty:
                 highlight_idx = set(exact.index)
             else:
                 if sterile_date_mode == "이전":
-                    candidate = filtered_ref.loc[start_dates == start_dates.max()]
+                    candidate = filtered_ref.loc[base_dates == base_dates.max()]
                 else:
-                    candidate = filtered_ref.loc[start_dates == start_dates.min()]
+                    candidate = filtered_ref.loc[base_dates == base_dates.min()]
                 if not candidate.empty:
                     highlight_idx = {candidate.index[0]}
 
@@ -646,7 +657,7 @@ if show_search:
         with h1:
             toric_mf = st.checkbox("Toric+M/F", key="toric_mf")
         with h2:
-            st.empty()
+            export_no_power = st.checkbox("Power Off", key="export_no_power")
         with h3:
             st.markdown("**멸균필터**")
             sterile_query = st.text_input(
@@ -693,6 +704,7 @@ else:
     axis_query = st.session_state.get("axis_query", "")
     add_query = st.session_state.get("add_query", "")
     toric_mf = st.session_state.get("toric_mf", False)
+    export_no_power = st.session_state.get("export_no_power", False)
     category_query = st.session_state.get("category_query", "전체")
 
 
@@ -911,6 +923,7 @@ if show_search and has_filters:
                 source_path=source_path,
                 source_bytes=source_bytes,
                 use_toric=toric_mf,
+                remove_powers=export_no_power,
             )
             if not_found:
                 st.warning(f"SUMMARY 시트에서 {not_found}개 품목을 찾지 못해 수량이 0으로 출력될 수 있습니다.")

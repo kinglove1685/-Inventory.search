@@ -341,6 +341,7 @@ def build_summary_export(
     source_path: Path | None = None,
     source_bytes: bytes | None = None,
     use_toric: bool = False,
+    remove_powers: bool = False,
 ) -> tuple[bytes, bool]:
     wb = _open_workbook_from_source(source_path, source_bytes)
     sheet_name = SUMMARY_TORIC_SHEET if use_toric else SUMMARY_SHEET
@@ -389,13 +390,14 @@ def build_summary_export(
         powers = _collect_powers(ws, start_row=5)
         row = 5
 
-    for power in powers:
-        out_ws.cell(row=row, column=2, value=power)
-        qty_cell = out_ws.cell(row=row, column=3, value=0)
-        qty_cell.number_format = "#,##0"
-        out_ws.merge_cells(start_row=row, start_column=3, end_row=row, end_column=5)
-        _apply_row_style(out_ws, row, 2, 5, _power_fill(power))
-        row += 1
+    if not remove_powers:
+        for power in powers:
+            out_ws.cell(row=row, column=2, value=power)
+            qty_cell = out_ws.cell(row=row, column=3, value=0)
+            qty_cell.number_format = "#,##0"
+            out_ws.merge_cells(start_row=row, start_column=3, end_row=row, end_column=5)
+            _apply_row_style(out_ws, row, 2, 5, _power_fill(power))
+            row += 1
 
     out_ws.cell(row=row, column=2, value="합계")
     total_cell = out_ws.cell(row=row, column=3, value=0)
@@ -416,6 +418,7 @@ def build_summary_export_multi(
     source_path: Path | None = None,
     source_bytes: bytes | None = None,
     use_toric: bool = False,
+    remove_powers: bool = False,
 ) -> tuple[bytes, int]:
     wb = _open_workbook_from_source(source_path, source_bytes)
     sheet_name = SUMMARY_TORIC_SHEET if use_toric else SUMMARY_SHEET
@@ -487,11 +490,12 @@ def build_summary_export_multi(
     )
 
     filtered_powers = []
-    for power in powers:
-        p_norm = str(power).strip().upper()
-        total_qty = power_totals.get(p_norm, 0.0)
-        if _should_keep_power(power, total_qty, has_neg_10_25_stock, has_pos_stock):
-            filtered_powers.append(power)
+    if not remove_powers:
+        for power in powers:
+            p_norm = str(power).strip().upper()
+            total_qty = power_totals.get(p_norm, 0.0)
+            if _should_keep_power(power, total_qty, has_neg_10_25_stock, has_pos_stock):
+                filtered_powers.append(power)
 
     if use_toric:
         def _num_or_inf(v):
@@ -570,46 +574,54 @@ def build_summary_export_multi(
 
         total = 0.0
         local_map = power_map.get(key, {})
-        for i, power in enumerate(filtered_powers):
-            row = power_start_row + i
-            p_norm = str(power).strip().upper()
-            qty = local_map.get(p_norm, 0.0)
-            out_ws.cell(row=row, column=2, value=power)
-            qty_cell = out_ws.cell(row=row, column=out_col, value=qty)
-            qty_cell.number_format = "#,##0"
-            out_ws.merge_cells(start_row=row, start_column=out_col, end_row=row, end_column=out_col + 2)
-            _apply_row_style(out_ws, row, 2, 2, _power_fill(power))
-            _apply_row_style(out_ws, row, out_col, out_col + 2, _power_fill(power))
+        if not remove_powers:
+            for i, power in enumerate(filtered_powers):
+                row = power_start_row + i
+                p_norm = str(power).strip().upper()
+                qty = local_map.get(p_norm, 0.0)
+                out_ws.cell(row=row, column=2, value=power)
+                qty_cell = out_ws.cell(row=row, column=out_col, value=qty)
+                qty_cell.number_format = "#,##0"
+                out_ws.merge_cells(start_row=row, start_column=out_col, end_row=row, end_column=out_col + 2)
+                _apply_row_style(out_ws, row, 2, 2, _power_fill(power))
+                _apply_row_style(out_ws, row, out_col, out_col + 2, _power_fill(power))
+                try:
+                    total += float(qty)
+                except Exception:
+                    pass
+        else:
             try:
-                total += float(qty)
+                total = float(sum(local_map.values()))
             except Exception:
-                pass
+                total = 0.0
 
-        out_ws.cell(row=power_start_row + len(filtered_powers), column=2, value="합계")
-        total_cell = out_ws.cell(row=power_start_row + len(filtered_powers), column=out_col, value=total)
+        total_row = power_start_row + (len(filtered_powers) if not remove_powers else 0)
+        out_ws.cell(row=total_row, column=2, value="합계")
+        total_cell = out_ws.cell(row=total_row, column=out_col, value=total)
         total_cell.number_format = "#,##0"
         out_ws.merge_cells(
-            start_row=power_start_row + len(filtered_powers),
+            start_row=total_row,
             start_column=out_col,
-            end_row=power_start_row + len(filtered_powers),
+            end_row=total_row,
             end_column=out_col + 2,
         )
-        _apply_row_style(out_ws, power_start_row + len(filtered_powers), 2, 2, None)
-        _apply_row_style(out_ws, power_start_row + len(filtered_powers), out_col, out_col + 2, None)
+        _apply_row_style(out_ws, total_row, 2, 2, None)
+        _apply_row_style(out_ws, total_row, out_col, out_col + 2, None)
 
-    # 행 전체 합이 0일 때만 빨간색 표시
-    for i, power in enumerate(filtered_powers):
-        row = power_start_row + i
-        row_total = 0.0
-        p_norm = str(power).strip().upper()
-        for key in product_keys:
-            local_map = power_map.get(key, {})
-            row_total += float(local_map.get(p_norm, 0.0) or 0.0)
-        if row_total == 0:
-            out_ws.cell(row=row, column=2).font = FONT_RED
-            for idx in range(len(product_keys)):
-                out_col = 3 + (idx * 3)
-                out_ws.cell(row=row, column=out_col).font = FONT_RED
+    if not remove_powers:
+        # 행 전체 합이 0일 때만 빨간색 표시
+        for i, power in enumerate(filtered_powers):
+            row = power_start_row + i
+            row_total = 0.0
+            p_norm = str(power).strip().upper()
+            for key in product_keys:
+                local_map = power_map.get(key, {})
+                row_total += float(local_map.get(p_norm, 0.0) or 0.0)
+            if row_total == 0:
+                out_ws.cell(row=row, column=2).font = FONT_RED
+                for idx in range(len(product_keys)):
+                    out_col = 3 + (idx * 3)
+                    out_ws.cell(row=row, column=out_col).font = FONT_RED
 
     _apply_sheet_borders(out_ws, min_row=1, min_col=2)
     from io import BytesIO
