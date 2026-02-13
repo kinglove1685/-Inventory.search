@@ -1,2 +1,8 @@
 __pycache__/
 재고검색대시보드_실행.bat
+
+build/
+dist/
+*.log
+inventory_dashboard.spec
+~$*.xlsx
