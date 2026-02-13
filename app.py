@@ -918,13 +918,22 @@ if show_search and has_filters:
 
         export_df = result.reset_index(drop=True)
         if not export_df.empty:
-            export_bytes, not_found = build_summary_export_multi(
+            export_kwargs = dict(
                 rows=export_df.to_dict(orient="records"),
                 source_path=source_path,
                 source_bytes=source_bytes,
                 use_toric=toric_mf,
-                remove_powers=export_no_power,
             )
+            try:
+                export_bytes, not_found = build_summary_export_multi(
+                    **export_kwargs,
+                    remove_powers=export_no_power,
+                )
+            except TypeError as e:
+                # Backward compatibility: older deployed module may not support remove_powers.
+                if "remove_powers" not in str(e):
+                    raise
+                export_bytes, not_found = build_summary_export_multi(**export_kwargs)
             if not_found:
                 st.warning(f"SUMMARY 시트에서 {not_found}개 품목을 찾지 못해 수량이 0으로 출력될 수 있습니다.")
 
