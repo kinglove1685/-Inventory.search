@@ -38,6 +38,7 @@ DEFAULT_SEARCH_COLS = [COL_P, COL_T, COL_U, COL_NAME, COL_ITEM, COL_COLOR, COL_C
 
 CODE_PATTERN = re.compile(r"^[PTU]\d+$", re.IGNORECASE)
 CODE_COLOR_PATTERN = re.compile(r"^([PTU]\d+)(.+)$", re.IGNORECASE)
+TCODE_NUM_PATTERN = re.compile(r"(\d+)")
 
 FILL_POS = PatternFill("solid", fgColor="FFF2CC")   # 옅은 노랑
 FILL_NEG_0_10 = PatternFill("solid", fgColor="E6E6E6")  # 옅은 회색
@@ -105,6 +106,14 @@ def _power_fill(power) -> PatternFill | None:
     if v >= -20.00:
         return FILL_NEG_10_20
     return None
+
+
+def _tcode_sort_key(code: str) -> tuple[int, str]:
+    s = str(code or "").strip().upper()
+    m = TCODE_NUM_PATTERN.search(s)
+    if m:
+        return (int(m.group(1)), s)
+    return (10**9, s)
 
 
 def _apply_row_style(ws, row: int, start_col: int, end_col: int, fill: PatternFill | None):
@@ -496,9 +505,20 @@ def build_summary_export_multi(
                 _num_or_inf(k[6]),  # CYL
                 _num_or_inf(k[7]),  # AXIS
                 _num_or_inf(k[8]),  # ADD
-                k[0],               # name
-                k[1],               # pcode
-                k[2],               # tcode
+                _tcode_sort_key(k[2]),  # tcode
+                k[0],                   # name
+                k[1],                   # pcode
+            )
+        )
+    else:
+        product_keys.sort(
+            key=lambda k: (
+                _tcode_sort_key(k[2]),  # tcode
+                k[0],                   # name
+                k[1],                   # pcode
+                k[3],                   # color
+                k[4],                   # color_code
+                k[5],                   # tone
             )
         )
 
