@@ -185,8 +185,7 @@ with title_col:
     st.title(DASHBOARD_TITLE)
 
 with st.sidebar:
-    st.header("데이터")
-    st.caption("기본 경로: " + str(DEFAULT_PATH))
+    st.header("메뉴")
     if "active_screen" not in st.session_state:
         st.session_state["active_screen"] = "integrated"
 
