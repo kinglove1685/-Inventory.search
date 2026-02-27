@@ -24,9 +24,7 @@ from inventory_search import (
     COL_ADD,
 )
 
-DEFAULT_PATH = Path(__file__).parent / "재고관련 프로그램제작.xlsx"
-LIGHTWEIGHT_DEFAULT_PATH = Path(__file__).parent / "재고장_더미.xlsx"
-LIGHTWEIGHT_ASCII_PATH = Path(__file__).parent / "inventory_dummy.xlsx"
+DEFAULT_PATH = Path(__file__).parent / "inventory_dummy.xlsx"
 
 try:
     from streamlit_paste_button import paste_image_button as _paste_image_button
@@ -514,12 +512,7 @@ with st.sidebar:
         help="업로드하면 해당 파일의 재고장 데이터를 사용합니다. 업로드하지 않으면 기본 파일을 사용합니다.",
     )
 
-if DEFAULT_PATH.exists():
-    default_source = DEFAULT_PATH
-elif LIGHTWEIGHT_DEFAULT_PATH.exists():
-    default_source = LIGHTWEIGHT_DEFAULT_PATH
-else:
-    default_source = LIGHTWEIGHT_ASCII_PATH
+default_source = DEFAULT_PATH
 if inventory_upload is not None:
     source_bytes = inventory_upload.getvalue()
     df = load_from_bytes(source_bytes)
@@ -529,9 +522,8 @@ elif default_source.exists():
     source_path = default_source
     sterile_ref_df = load_sterile_reference(default_source)
 else:
-    st.error(
-        f"기본 엑셀 파일이 없습니다: {DEFAULT_PATH} 또는 {LIGHTWEIGHT_DEFAULT_PATH} 또는 {LIGHTWEIGHT_ASCII_PATH}"
-    )
+    st.error(f"기본 엑셀 파일이 없습니다: {DEFAULT_PATH}")
+    st.info("사이드바에서 재고 엑셀 파일을 업로드해서 바로 사용할 수 있습니다.")
     st.stop()
 sterile_order_map = _build_sterile_order_map(sterile_ref_df)
 sterile_ref_view_df = _build_sterile_reference_view(sterile_ref_df, before_count=20, after_count=20)
