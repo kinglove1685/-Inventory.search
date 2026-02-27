@@ -13,6 +13,7 @@ from inventory_search import (
     COL_COLOR,
     COL_COLOR_HEX,
     COL_LOTNO,
+    COL_ITEM,
     COL_NAME,
     COL_P,
     COL_T,
@@ -24,6 +25,8 @@ from inventory_search import (
 )
 
 DEFAULT_PATH = Path(__file__).parent / "재고관련 프로그램제작.xlsx"
+LIGHTWEIGHT_DEFAULT_PATH = Path(__file__).parent / "재고장_더미.xlsx"
+LIGHTWEIGHT_ASCII_PATH = Path(__file__).parent / "inventory_dummy.xlsx"
 
 try:
     from streamlit_paste_button import paste_image_button as _paste_image_button
@@ -504,17 +507,39 @@ def run_ocr(image_bytes: bytes) -> str:
 # Load data
 source_bytes = None
 source_path = None
-if not DEFAULT_PATH.exists():
-    st.error(f"기본 엑셀 파일이 없습니다: {DEFAULT_PATH}")
+with st.sidebar:
+    inventory_upload = st.file_uploader(
+        "재고 엑셀 업로드 (.xlsx)",
+        type=["xlsx", "xlsm"],
+        help="업로드하면 해당 파일의 재고장 데이터를 사용합니다. 업로드하지 않으면 기본 파일을 사용합니다.",
+    )
+
+if DEFAULT_PATH.exists():
+    default_source = DEFAULT_PATH
+elif LIGHTWEIGHT_DEFAULT_PATH.exists():
+    default_source = LIGHTWEIGHT_DEFAULT_PATH
+else:
+    default_source = LIGHTWEIGHT_ASCII_PATH
+if inventory_upload is not None:
+    source_bytes = inventory_upload.getvalue()
+    df = load_from_bytes(source_bytes)
+    sterile_ref_df = pd.DataFrame(columns=["시작일자", "종료일자", "멸균LOT", "유효기간(5년)", "유효기간(8년)"])
+elif default_source.exists():
+    df = load_from_path(default_source)
+    source_path = default_source
+    sterile_ref_df = load_sterile_reference(default_source)
+else:
+    st.error(
+        f"기본 엑셀 파일이 없습니다: {DEFAULT_PATH} 또는 {LIGHTWEIGHT_DEFAULT_PATH} 또는 {LIGHTWEIGHT_ASCII_PATH}"
+    )
     st.stop()
-df = load_from_path(DEFAULT_PATH)
-source_path = DEFAULT_PATH
-sterile_ref_df = load_sterile_reference(DEFAULT_PATH)
 sterile_order_map = _build_sterile_order_map(sterile_ref_df)
 sterile_ref_view_df = _build_sterile_reference_view(sterile_ref_df, before_count=20, after_count=20)
 
 with meta_col:
-    if source_path is not None and Path(source_path).exists():
+    if inventory_upload is not None:
+        st.caption(f"재고장 업데이트: 업로드 파일 ({inventory_upload.name})")
+    elif source_path is not None and Path(source_path).exists():
         mtime = Path(source_path).stat().st_mtime
         kst = timezone(timedelta(hours=9))
         mtime_kst = datetime.fromtimestamp(mtime, tz=kst)
@@ -879,6 +904,12 @@ if show_search and has_filters:
         st.info("검색 결과가 없습니다.")
     else:
         display_df = result.copy()
+        if COL_ITEM in display_df.columns and COL_NAME in display_df.columns:
+            cols = list(display_df.columns)
+            cols = [c for c in cols if c != COL_ITEM]
+            name_idx = cols.index(COL_NAME)
+            cols.insert(name_idx, COL_ITEM)
+            display_df = display_df[cols]
         if COL_COLOR_HEX in display_df.columns:
             display_df = display_df.drop(columns=[COL_COLOR_HEX])
         if "최종재고" in display_df.columns:
@@ -893,6 +924,7 @@ if show_search and has_filters:
             table = st.dataframe(
                 display_df,
                 use_container_width=True,
+                hide_index=True,
                 on_select="rerun",
                 selection_mode="single-row",
                 height=460,
@@ -911,7 +943,7 @@ if show_search and has_filters:
                         lot_df["재고(pcs)"] = lot_df["재고(pcs)"].apply(
                             lambda v: f"{int(v):,}" if pd.notna(v) and str(v).strip() != "" else v
                         )
-                    st.dataframe(lot_df, use_container_width=True, height=320)
+                    st.dataframe(lot_df, use_container_width=True, hide_index=True, height=320)
                 else:
                     st.caption("LOT 정보 없음")
 

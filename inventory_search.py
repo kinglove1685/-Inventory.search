@@ -26,6 +26,8 @@ COL_GROUP_PRODUCT = "구분_제품"
 COL_GROUP_ERP = "구분_ERP"
 COL_GROUP = COL_GROUP_PRODUCT
 COL_LOTNO = "LOTNO"
+COL_WAREHOUSE = "창고"
+COL_SUBLOT = "서브LOT"
 COL_STERILE_NO_CANDIDATES = ["멸균No.", "멸균NO.", "멸균no.", "멸균No", "멸균NO", "멸균no"]
 COL_CYL = "CYL"
 COL_AXIS = "AXIS"
@@ -35,6 +37,8 @@ SUMMARY_SHEET = "SUMMARY"
 SUMMARY_TORIC_SHEET = "SUMMARY (ToricMF)"
 
 DEFAULT_SEARCH_COLS = [COL_P, COL_T, COL_U, COL_NAME, COL_ITEM, COL_COLOR, COL_COLOR_CODE, COL_TONE, COL_LOTNO]
+WAREHOUSE_COL_CANDIDATES = [COL_WAREHOUSE, "창고명", "WAREHOUSE"]
+SUBLOT_COL_CANDIDATES = [COL_SUBLOT, "SUBLOT", "SUB LOT", "서브 Lot", "서브로트"]
 
 CODE_PATTERN = re.compile(r"^[PTU]\d+$", re.IGNORECASE)
 CODE_COLOR_PATTERN = re.compile(r"^([PTU]\d+)(.+)$", re.IGNORECASE)
@@ -50,6 +54,12 @@ FONT_RED = Font(color="FF0000")
 
 def _normalize_series(s: pd.Series) -> pd.Series:
     return s.fillna("").astype(str).str.strip()
+
+
+def _join_unique_values(s: pd.Series) -> str:
+    vals = sorted({str(v).strip() for v in s.fillna("") if str(v).strip()})
+    return ", ".join(vals)
+
 
 def _compact_upper(s: pd.Series) -> pd.Series:
     return s.fillna("").astype(str).str.upper().str.replace(r"\s+", "", regex=True)
@@ -114,6 +124,27 @@ def _tcode_sort_key(code: str) -> tuple[int, str]:
     if m:
         return (int(m.group(1)), s)
     return (10**9, s)
+
+
+def _power_sort_key(power) -> tuple[int, float | str]:
+    v = _power_to_float(power)
+    if v is None:
+        return (1, str(power or "").strip().upper())
+    return (0, v)
+
+
+def _extract_powers_from_rows(rows: list[dict]) -> list[str]:
+    seen = {}
+    for row in rows:
+        p = str(row.get(COL_POWER, "")).strip()
+        if not p:
+            continue
+        key = p.upper()
+        if key not in seen:
+            seen[key] = p
+    if not seen:
+        return []
+    return [seen[k] for k in sorted(seen, key=lambda k: _power_sort_key(seen[k]))]
 
 
 def _apply_row_style(ws, row: int, start_col: int, end_col: int, fill: PatternFill | None):
@@ -230,7 +261,7 @@ def load_inventory(path: Path, load_color: bool = False) -> pd.DataFrame:
     df = _ensure_compat_columns(df)
 
     # Normalize key columns to strings
-    for col in [COL_CATEGORY, COL_P, COL_T, COL_U, COL_ITEM, COL_NAME, COL_COLOR, COL_COLOR_CODE, COL_TONE, COL_GROUP_PRODUCT, COL_GROUP_ERP, COL_LOTNO, COL_CYL, COL_AXIS, COL_ADD]:
+    for col in [COL_CATEGORY, COL_P, COL_T, COL_U, COL_ITEM, COL_NAME, COL_COLOR, COL_COLOR_CODE, COL_TONE, COL_GROUP_PRODUCT, COL_GROUP_ERP, COL_LOTNO, COL_CYL, COL_AXIS, COL_ADD, COL_WAREHOUSE, COL_SUBLOT]:
         if col in df.columns:
             df[col] = _normalize_series(df[col])
 
@@ -258,7 +289,7 @@ def load_inventory_from_bytes(data: bytes, load_color: bool = False) -> pd.DataF
 
     df = _ensure_compat_columns(df)
 
-    for col in [COL_CATEGORY, COL_P, COL_T, COL_U, COL_ITEM, COL_NAME, COL_COLOR, COL_COLOR_CODE, COL_TONE, COL_GROUP_PRODUCT, COL_GROUP_ERP, COL_LOTNO, COL_CYL, COL_AXIS, COL_ADD]:
+    for col in [COL_CATEGORY, COL_P, COL_T, COL_U, COL_ITEM, COL_NAME, COL_COLOR, COL_COLOR_CODE, COL_TONE, COL_GROUP_PRODUCT, COL_GROUP_ERP, COL_LOTNO, COL_CYL, COL_AXIS, COL_ADD, COL_WAREHOUSE, COL_SUBLOT]:
         if col in df.columns:
             df[col] = _normalize_series(df[col])
 
@@ -422,24 +453,28 @@ def build_summary_export_multi(
 ) -> tuple[bytes, int]:
     wb = _open_workbook_from_source(source_path, source_bytes)
     sheet_name = SUMMARY_TORIC_SHEET if use_toric else SUMMARY_SHEET
-    if sheet_name not in wb.sheetnames:
-        raise ValueError(f"{sheet_name} sheet not found")
-    ws = wb[sheet_name]
+    ws = wb[sheet_name] if sheet_name in wb.sheetnames else None
 
     if use_toric:
-        powers = _collect_powers(ws, start_row=8)
         header_row = 7
         power_start_row = 8
     else:
-        powers = _collect_powers(ws, start_row=5)
         header_row = 4
         power_start_row = 5
+
+    if ws is not None:
+        powers = _collect_powers(ws, start_row=power_start_row)
+    else:
+        powers = _extract_powers_from_rows(rows)
 
     out_wb = Workbook()
     out_ws = out_wb.active
     out_ws.title = "EXPORT"
 
-    out_ws.cell(row=header_row, column=2, value=ws.cell(row=header_row, column=2).value or "파워")
+    power_header = "파워"
+    if ws is not None:
+        power_header = ws.cell(row=header_row, column=2).value or "파워"
+    out_ws.cell(row=header_row, column=2, value=power_header)
 
     # Build product -> power qty map from search result rows
     product_keys = []
@@ -746,6 +781,7 @@ def _summarize_inventory(df: pd.DataFrame) -> pd.DataFrame:
         df.groupby(group_cols, dropna=False)
         .agg(
             **{
+                COL_ITEM: (COL_ITEM, "first") if COL_ITEM in df.columns else (COL_P, "first"),
                 COL_NAME: (COL_NAME, "first") if COL_NAME in df.columns else (COL_P, "first"),
                 COL_STOCK: (COL_STOCK, "sum"),
                 "LOTNO 합계수량": (COL_LOTNO, lambda s: s.notna().sum()) if COL_LOTNO in df.columns else (COL_STOCK, "count"),
@@ -775,6 +811,7 @@ def _summarize_inventory(df: pd.DataFrame) -> pd.DataFrame:
         COL_CYL,
         COL_AXIS,
         COL_ADD,
+        COL_ITEM,
         COL_NAME,
         COL_STOCK,
         "LOTNO 합계수량",
@@ -848,39 +885,39 @@ def lot_breakdown(df: pd.DataFrame, row: dict) -> pd.DataFrame:
         if c in filtered.columns:
             sterile_col = c
             break
+    warehouse_col = None
+    for c in WAREHOUSE_COL_CANDIDATES:
+        if c in filtered.columns:
+            warehouse_col = c
+            break
+    sublot_col = None
+    for c in SUBLOT_COL_CANDIDATES:
+        if c in filtered.columns:
+            sublot_col = c
+            break
 
+    agg_map = {}
+    if warehouse_col is not None:
+        agg_map[COL_WAREHOUSE] = (warehouse_col, _join_unique_values)
+    if sublot_col is not None:
+        agg_map[COL_SUBLOT] = (sublot_col, _join_unique_values)
     if sterile_col is not None:
-        lot_df = (
-            filtered.groupby(COL_LOTNO, dropna=False)
-            .agg(
-                **{
-                    "멸균No.": (
-                        sterile_col,
-                        lambda s: ", ".join(
-                            sorted(
-                                {
-                                    str(v).strip()
-                                    for v in s.fillna("")
-                                    if str(v).strip()
-                                }
-                            )
-                        ),
-                    ),
-                    COL_STOCK: (COL_STOCK, "sum"),
-                }
-            )
-            .reset_index()
-            .sort_values(COL_STOCK, ascending=False)
-        )
-    else:
-        lot_df = (
-            filtered.groupby(COL_LOTNO, dropna=False)[COL_STOCK]
-            .sum()
-            .reset_index()
-            .sort_values(COL_STOCK, ascending=False)
-        )
+        agg_map["멸균No."] = (sterile_col, _join_unique_values)
+    agg_map[COL_STOCK] = (COL_STOCK, "sum")
+
+    lot_df = (
+        filtered.groupby(COL_LOTNO, dropna=False)
+        .agg(**agg_map)
+        .reset_index()
+        .sort_values(COL_STOCK, ascending=False)
+    )
     if COL_STOCK in lot_df.columns:
         lot_df[COL_STOCK] = pd.to_numeric(lot_df[COL_STOCK], errors="coerce").fillna(0).round(0).astype(int)
+
+    preferred = [COL_WAREHOUSE, COL_LOTNO, "멸균No.", COL_SUBLOT, COL_STOCK]
+    cols = [c for c in preferred if c in lot_df.columns]
+    if cols:
+        lot_df = lot_df[cols]
 
     return lot_df
 
