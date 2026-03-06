@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from extract_inventory_sheet import extract_sheet_values
+from extract_inventory_sheet import DEFAULT_SHEETS, extract_sheet_values
 
 
 OUTPUT_NAME = "inventory_dummy.xlsx"
 PREFERRED_SOURCE = "재고관련 프로그램제작.xlsx"
-TARGET_SHEET = "재고장"
 
 
 def find_source(base: Path) -> Path:
@@ -29,9 +28,10 @@ def main() -> None:
     base = Path(__file__).resolve().parent
     src = find_source(base)
     out = base / OUTPUT_NAME
-    extract_sheet_values(src, out, TARGET_SHEET)
+    extract_sheet_values(src, out, DEFAULT_SHEETS)
     print(f"Source: {src}")
     print(f"Output: {out}")
+    print(f"Sheets: {', '.join(DEFAULT_SHEETS)}")
     print("Done")
 
 

@@ -225,7 +225,6 @@ show_sterile_ref = active_screen == "sterile_ref"
 
 _persist_defaults = {
     "toric_mf": False,
-    "export_no_power": False,
     "query": "",
     "color_query": "",
     "tone_query": "",
@@ -669,11 +668,11 @@ if show_search:
     with header_right:
         # keep tight vertical spacing, but align sterile filter widths to:
         # query = AXIS~ADD (2 cols), mode = category (1 col)
-        h1, h2, h3, h4 = st.columns([0.9, 3.1, 2.0, 1.0])
+        h1, h2, h3, h4 = st.columns([0.9, 3.15, 1.95, 1.0])
         with h1:
             toric_mf = st.checkbox("Toric+M/F", key="toric_mf")
         with h2:
-            export_no_power = st.checkbox("Power Off", key="export_no_power")
+            st.markdown("&nbsp;", unsafe_allow_html=True)
         with h3:
             st.markdown("**멸균필터**")
             sterile_query = st.text_input(
@@ -720,7 +719,6 @@ else:
     axis_query = st.session_state.get("axis_query", "")
     add_query = st.session_state.get("add_query", "")
     toric_mf = st.session_state.get("toric_mf", False)
-    export_no_power = st.session_state.get("export_no_power", False)
     category_query = st.session_state.get("category_query", "전체")
 
 
@@ -947,16 +945,7 @@ if show_search and has_filters:
                 source_bytes=source_bytes,
                 use_toric=toric_mf,
             )
-            try:
-                export_bytes, not_found = build_summary_export_multi(
-                    **export_kwargs,
-                    remove_powers=export_no_power,
-                )
-            except TypeError as e:
-                # Backward compatibility: older deployed module may not support remove_powers.
-                if "remove_powers" not in str(e):
-                    raise
-                export_bytes, not_found = build_summary_export_multi(**export_kwargs)
+            export_bytes, not_found = build_summary_export_multi(**export_kwargs)
             if not_found:
                 st.warning(f"SUMMARY 시트에서 {not_found}개 품목을 찾지 못해 수량이 0으로 출력될 수 있습니다.")
 

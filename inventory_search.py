@@ -1,4 +1,5 @@
 ﻿# inventory_search.py
+import math
 import re
 import sys
 from pathlib import Path
@@ -63,6 +64,23 @@ def _join_unique_values(s: pd.Series) -> str:
 
 def _compact_upper(s: pd.Series) -> pd.Series:
     return s.fillna("").astype(str).str.upper().str.replace(r"\s+", "", regex=True)
+
+
+def _is_five_pack_category(category) -> bool:
+    text = str(category or "").upper().replace(" ", "")
+    return "1DAY" in text
+
+
+def _normalize_display_qty(qty, category) -> int:
+    try:
+        qty_val = float(qty)
+    except Exception:
+        qty_val = 0.0
+
+    if _is_five_pack_category(category):
+        qty_val = math.floor(qty_val / 5.0) * 5
+
+    return int(round(qty_val))
 
 
 def _excel_color_to_hex(cell) -> str:
@@ -160,6 +178,51 @@ def _apply_sheet_borders(ws, min_row: int = 1, min_col: int = 1):
     for r in range(min_row, max_row + 1):
         for c in range(min_col, max_col + 1):
             ws.cell(row=r, column=c).border = BORDER_THIN
+
+
+def _write_export_header_block(out_ws, start_row: int, out_col: int, key, info: dict, use_toric: bool) -> None:
+    if use_toric:
+        name, pcode, tcode, color, color_code, tone, cyl, axis, add = key
+    else:
+        name, pcode, tcode, color, color_code, tone = key
+
+    out_ws.cell(row=start_row, column=out_col, value=name)
+    out_ws.merge_cells(start_row=start_row, start_column=out_col, end_row=start_row, end_column=out_col + 2)
+    out_ws.cell(row=start_row + 1, column=out_col, value="CODE")
+    out_ws.cell(row=start_row + 1, column=out_col + 1, value=tcode)
+    out_ws.cell(row=start_row + 1, column=out_col + 2, value=pcode)
+
+    if use_toric:
+        group_val = str(info.get(COL_GROUP, "")).strip().upper()
+        show_cyl_axis = True
+        show_add = True
+        if group_val == "TORIC":
+            show_add = False
+        elif group_val == "M/F":
+            show_cyl_axis = False
+        elif group_val == "TORIC+M/F":
+            show_cyl_axis = True
+            show_add = True
+
+        out_ws.cell(row=start_row + 2, column=out_col, value="CYL")
+        out_ws.cell(row=start_row + 2, column=out_col + 1, value=info.get(COL_CYL, "") if show_cyl_axis else "")
+        out_ws.cell(row=start_row + 2, column=out_col + 2, value="")
+        out_ws.merge_cells(start_row=start_row + 2, start_column=out_col + 1, end_row=start_row + 2, end_column=out_col + 2)
+        out_ws.cell(row=start_row + 3, column=out_col, value="AXIS")
+        out_ws.cell(row=start_row + 3, column=out_col + 1, value=info.get(COL_AXIS, "") if show_cyl_axis else "")
+        out_ws.cell(row=start_row + 3, column=out_col + 2, value="")
+        out_ws.merge_cells(start_row=start_row + 3, start_column=out_col + 1, end_row=start_row + 3, end_column=out_col + 2)
+        out_ws.cell(row=start_row + 4, column=out_col, value="ADD")
+        out_ws.cell(row=start_row + 4, column=out_col + 1, value=info.get(COL_ADD, "") if show_add else "")
+        out_ws.cell(row=start_row + 4, column=out_col + 2, value="")
+        out_ws.merge_cells(start_row=start_row + 4, start_column=out_col + 1, end_row=start_row + 4, end_column=out_col + 2)
+        out_ws.cell(row=start_row + 5, column=out_col, value=color or "")
+        out_ws.cell(row=start_row + 5, column=out_col + 1, value=color_code or "")
+        out_ws.cell(row=start_row + 5, column=out_col + 2, value=tone or "")
+    else:
+        out_ws.cell(row=start_row + 2, column=out_col, value=color or "")
+        out_ws.cell(row=start_row + 2, column=out_col + 1, value=color_code or "")
+        out_ws.cell(row=start_row + 2, column=out_col + 2, value=tone or "")
 
 
 def _should_keep_power(power, total_qty: float, keep_neg_10_25_plus: bool, keep_pos_range: bool) -> bool:
@@ -562,50 +625,8 @@ def build_summary_export_multi(
         )
 
     for idx, key in enumerate(product_keys):
-        if use_toric:
-            name, pcode, tcode, color, color_code, tone, cyl, axis, add = key
-        else:
-            name, pcode, tcode, color, color_code, tone = key
-
         out_col = 3 + (idx * 3)
-
-        out_ws.cell(row=2, column=out_col, value=name)
-        out_ws.merge_cells(start_row=2, start_column=out_col, end_row=2, end_column=out_col + 2)
-        out_ws.cell(row=3, column=out_col, value="CODE")
-        out_ws.cell(row=3, column=out_col + 1, value=tcode)
-        out_ws.cell(row=3, column=out_col + 2, value=pcode)
-        if use_toric:
-            info = info_map.get(key, {})
-            group_val = str(info.get(COL_GROUP, "")).strip().upper()
-            show_cyl_axis = True
-            show_add = True
-            if group_val == "TORIC":
-                show_add = False
-            elif group_val == "M/F":
-                show_cyl_axis = False
-            elif group_val == "TORIC+M/F":
-                show_cyl_axis = True
-                show_add = True
-
-            out_ws.cell(row=4, column=out_col, value="CYL")
-            out_ws.cell(row=4, column=out_col + 1, value=info.get(COL_CYL, "") if show_cyl_axis else "")
-            out_ws.cell(row=4, column=out_col + 2, value="")
-            out_ws.merge_cells(start_row=4, start_column=out_col + 1, end_row=4, end_column=out_col + 2)
-            out_ws.cell(row=5, column=out_col, value="AXIS")
-            out_ws.cell(row=5, column=out_col + 1, value=info.get(COL_AXIS, "") if show_cyl_axis else "")
-            out_ws.cell(row=5, column=out_col + 2, value="")
-            out_ws.merge_cells(start_row=5, start_column=out_col + 1, end_row=5, end_column=out_col + 2)
-            out_ws.cell(row=6, column=out_col, value="ADD")
-            out_ws.cell(row=6, column=out_col + 1, value=info.get(COL_ADD, "") if show_add else "")
-            out_ws.cell(row=6, column=out_col + 2, value="")
-            out_ws.merge_cells(start_row=6, start_column=out_col + 1, end_row=6, end_column=out_col + 2)
-            out_ws.cell(row=7, column=out_col, value=color or "")
-            out_ws.cell(row=7, column=out_col + 1, value=color_code or "")
-            out_ws.cell(row=7, column=out_col + 2, value=tone or "")
-        else:
-            out_ws.cell(row=4, column=out_col, value=color or "")
-            out_ws.cell(row=4, column=out_col + 1, value=color_code or "")
-            out_ws.cell(row=4, column=out_col + 2, value=tone or "")
+        _write_export_header_block(out_ws, 2, out_col, key, info_map.get(key, {}), use_toric)
 
         total = 0.0
         local_map = power_map.get(key, {})
@@ -642,6 +663,26 @@ def build_summary_export_multi(
         )
         _apply_row_style(out_ws, total_row, 2, 2, None)
         _apply_row_style(out_ws, total_row, out_col, out_col + 2, None)
+
+    summary_header_row = total_row + 5
+    summary_value_row = summary_header_row + (6 if use_toric else 3)
+    out_ws.cell(row=summary_value_row, column=2, value="합계")
+    for idx, key in enumerate(product_keys):
+        out_col = 3 + (idx * 3)
+        _write_export_header_block(out_ws, summary_header_row, out_col, key, info_map.get(key, {}), use_toric)
+        local_map = power_map.get(key, {})
+        try:
+            summary_total = float(sum(local_map.values()))
+        except Exception:
+            summary_total = 0.0
+        total_cell = out_ws.cell(row=summary_value_row, column=out_col, value=summary_total)
+        total_cell.number_format = "#,##0"
+        out_ws.merge_cells(
+            start_row=summary_value_row,
+            start_column=out_col,
+            end_row=summary_value_row,
+            end_column=out_col + 2,
+        )
 
     if not remove_powers:
         # 행 전체 합이 0일 때만 빨간색 표시
@@ -793,7 +834,13 @@ def _summarize_inventory(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     if COL_STOCK in result.columns:
-        result[COL_STOCK] = pd.to_numeric(result[COL_STOCK], errors="coerce").fillna(0).round(0).astype(int)
+        result[COL_STOCK] = [
+            _normalize_display_qty(qty, category if COL_CATEGORY in result.columns else "")
+            for qty, category in zip(
+                pd.to_numeric(result[COL_STOCK], errors="coerce").fillna(0),
+                result[COL_CATEGORY] if COL_CATEGORY in result.columns else [""] * len(result),
+            )
+        ]
 
     # Power formatting: -00.00, -05.25, -04.75
     if COL_POWER in result.columns:
@@ -912,7 +959,11 @@ def lot_breakdown(df: pd.DataFrame, row: dict) -> pd.DataFrame:
         .sort_values(COL_STOCK, ascending=False)
     )
     if COL_STOCK in lot_df.columns:
-        lot_df[COL_STOCK] = pd.to_numeric(lot_df[COL_STOCK], errors="coerce").fillna(0).round(0).astype(int)
+        category = row.get(COL_CATEGORY, "")
+        lot_df[COL_STOCK] = [
+            _normalize_display_qty(qty, category)
+            for qty in pd.to_numeric(lot_df[COL_STOCK], errors="coerce").fillna(0)
+        ]
 
     preferred = [COL_WAREHOUSE, COL_LOTNO, "멸균No.", COL_SUBLOT, COL_STOCK]
     cols = [c for c in preferred if c in lot_df.columns]
